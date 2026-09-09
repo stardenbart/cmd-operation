@@ -145,14 +145,42 @@ export async function buat(masukan, aktor, ip) {
  * sehingga baris berikutnya membaca sisa FIFO yang sudah dikurangi baris
  * sebelumnya bila kebetulan menyentuh silo yang sama.
  */
-export async function buatBanyak({ trfTime, isDraft = false, baris }, aktor, ip) {
+export async function buatBanyak({
+  trfTime,
+  isDraft = false,
+  modeBatch = 'MANUAL',
+  batchBersama,
+  baris,
+}, aktor, ip) {
   if (!Array.isArray(baris) || baris.length === 0) {
     throw new BusinessError('FR-6', 'Minimal satu baris transfer harus diisi');
   }
+  if (!['SAMA', 'MANUAL'].includes(modeBatch)) {
+    throw new BusinessError('VALIDATION_ERROR', `Mode batch tidak dikenal: ${modeBatch}`);
+  }
+
   return withTransaction(async (conn) => {
     const transfers = [];
     for (const b of baris) {
-      transfers.push(await buatDalam(conn, { ...b, trfTime, isDraft }, aktor, ip));
+      // Mode SAMA ditegakkan kembali di server agar seluruh tank beraturan
+      // PILIH benar-benar memakai sumber batch yang sama. Tank CMD2,
+      // TANPA_BATCH, dan PINDAH SILO tetap mengabaikan nilai ini di buatDalam.
+      const nilaiBatch = modeBatch === 'SAMA'
+        ? {
+          batchPrefix: batchBersama?.batchPrefix,
+          batchNomor: batchBersama?.batchNomor,
+        }
+        : {
+          batchPrefix: b.batchPrefix,
+          batchNomor: b.batchNomor,
+        };
+
+      transfers.push(await buatDalam(
+        conn,
+        { ...b, ...nilaiBatch, trfTime, isDraft },
+        aktor,
+        ip,
+      ));
     }
     return { transfers };
   });

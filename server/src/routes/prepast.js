@@ -20,13 +20,12 @@ const skemaBuat = z.object({
   // Beberapa silo dalam satu kali kirim — inti FR-29
   pecahan: z.array(skemaPecahan).min(1, 'isi minimal satu silo tujuan').max(9),
   // Variabel proses diisi SATU KALI, berlaku untuk seluruh baris (FR-29.2)
-  prepastStart: waktu().optional(),
+  prepastStart: waktu(),
   prepastFinish: waktu().optional(),
-  flowrate: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
-  tempAfterHeater: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
-  tempOutput: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
+  flowrate: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
+  tempAfterHeater: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
+  tempOutput: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
   remarks: teksOpsional(),
-  isDraft: z.coerce.boolean().default(false),
   konfirmasiRollover: z.coerce.boolean().default(false),
   konfirmasiOprp: z.coerce.boolean().default(false),
   kontinu: z.coerce.boolean().default(false),
@@ -34,15 +33,20 @@ const skemaBuat = z.object({
 });
 
 const skemaLengkapi = z.object({
-  prepastStart: waktu(),
-  prepastFinish: waktu(),
-  flowrate: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
-  tempAfterHeater: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
-  tempOutput: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
+  prepastStart: waktu().optional(),
+  prepastFinish: waktu().optional(),
+  flowrate: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
+  tempAfterHeater: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
+  tempOutput: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
   konfirmasiRollover: z.coerce.boolean().default(false),
-  kontinu: z.coerce.boolean().default(false),
+  konfirmasiOprp: z.coerce.boolean().default(false),
+  kontinu: z.coerce.boolean().optional(),
   continuityPreviousId: z.coerce.number().int().positive().optional(),
-});
+}).refine(
+  (nilai) => ['prepastStart', 'prepastFinish', 'flowrate', 'tempAfterHeater', 'tempOutput']
+    .some((key) => nilai[key] !== undefined),
+  { message: 'isi minimal satu field Prepast yang akan dilengkapi' },
+);
 
 const skemaDaftar = z.object({
   halaman: z.coerce.number().int().positive().default(1),
@@ -83,6 +87,14 @@ router.get(
   validasiQuery(skemaDaftar),
   asyncHandler(async (req, res) => {
     res.json(await prepast.daftar(req.query));
+  }),
+);
+
+router.get(
+  '/:id/complete-context',
+  wajibWewenang(AKSI.TRANSAKSI_SUNTING_PENDING),
+  asyncHandler(async (req, res) => {
+    res.json({ data: await prepast.konteksPelengkapan(Number(req.params.id), req.user) });
   }),
 );
 

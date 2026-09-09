@@ -15,6 +15,7 @@
 import { pool } from '../db/pool.js';
 import { can, AKSI } from '../auth/permissions.js';
 import { BusinessError } from '../middleware/errors.js';
+import { statusKelengkapanPrepast } from './prepastGantung.js';
 
 /**
  * Satu definisi per modul: dari mana barisnya, dan bagaimana meringkasnya.
@@ -207,8 +208,14 @@ function tindakan(baris, aktor) {
     can(aktor.role, AKSI.RECORD_VOID_SENDIRI)
     && status === 'Pending Approval';
 
+  const bolehLengkapi = Boolean(baris.is_gantung)
+    && bolehSunting
+    && (spv || Number(baris.operator_id) === Number(aktor.id));
+
   return {
-    bolehSunting,
+    // Record gantung memakai endpoint pelengkapan khusus. Operator lain tidak
+    // boleh mengubahnya lewat tombol koreksi umum.
+    bolehSunting: baris.is_gantung ? bolehLengkapi : bolehSunting,
     /*
      * Ini KENYAMANAN TAMPILAN - yang menegakkan tetap pastikanBolehVoid() di
      * services/void.js. Bendera ini hanya menentukan tombolnya muncul atau
@@ -234,7 +241,7 @@ function tindakan(baris, aktor) {
     bolehAjukanKoreksi:
       can(aktor.role, AKSI.KOREKSI_AJUKAN) && status === 'Approved',
     // Draft dilengkapi lewat jalur tersendiri (BR-16)
-    bolehLengkapi: Boolean(baris.is_gantung) && bolehSunting,
+    bolehLengkapi,
   };
 }
 
@@ -253,7 +260,8 @@ export async function gantung(aktor) {
   const [baris] = await pool.query(
     `SELECT 'prepast' AS modul, p.kode, p.id, p.created_at, p.operator_id,
             s.silo_name AS tempat, p.vol_prepast_ltr AS volume_ltr,
-            o.nama_lengkap AS operator_nama
+            o.nama_lengkap AS operator_nama, p.prepast_start, p.prepast_finish,
+            p.flowrate_pst, p.temp_after_heater, p.temp_output_prd
        FROM prepast_record p
        JOIN silo s      ON s.id = p.silo_tujuan_id
        JOIN operator o  ON o.id = p.operator_id
@@ -261,7 +269,8 @@ export async function gantung(aktor) {
         AND p.status_approval NOT IN ('VOIDED', 'REVISED')
       UNION ALL
      SELECT 'transfer', t.kode, t.id, t.created_at, t.operator_id,
-            sa.silo_name, t.vol_ltr, o.nama_lengkap
+            sa.silo_name, t.vol_ltr, o.nama_lengkap,
+            NULL, NULL, NULL, NULL, NULL
        FROM transfer t
        JOIN silo sa     ON sa.id = t.silo_asal_id
        JOIN operator o  ON o.id = t.operator_id
@@ -272,15 +281,27 @@ export async function gantung(aktor) {
 
   const sekarang = Date.now();
 
-  const daftar = baris.map((b) => ({
-    modul: b.modul,
-    id: b.id,
-    kode: b.kode,
-    tempat: b.tempat,
-    volumeLtr: b.volume_ltr === null ? null : Number(b.volume_ltr),
-    operatorNama: b.operator_nama,
-    dibuat: b.created_at,
-    usiaJam: Math.max(0, Math.floor((sekarang - new Date(b.created_at).getTime()) / 3_600_000)),
+  const daftar = baris.map((b) => {
+    const fieldKosong = b.modul === 'prepast'
+      ? statusKelengkapanPrepast({
+        prepastStart: b.prepast_start,
+        prepastFinish: b.prepast_finish,
+        flowrate: b.flowrate_pst,
+        tempAfterHeater: b.temp_after_heater,
+        tempOutput: b.temp_output_prd,
+      }).fieldKosong
+      : [];
+
+    return {
+      modul: b.modul,
+      id: b.id,
+      kode: b.kode,
+      tempat: b.tempat,
+      volumeLtr: b.volume_ltr === null ? null : Number(b.volume_ltr),
+      operatorNama: b.operator_nama,
+      dibuat: b.created_at,
+      fieldKosong,
+      usiaJam: Math.max(0, Math.floor((sekarang - new Date(b.created_at).getTime()) / 3_600_000)),
     /*
      * Siapa yang dapat melengkapinya.
      *
@@ -288,9 +309,10 @@ export async function gantung(aktor) {
      * pun. Bendera ini kenyamanan tampilan - penegakannya tetap di alur
      * koreksi, yang sudah memeriksa wewenang atas barisnya.
      */
-    bolehSayaLengkapi:
-      aktor.role === 'SPV' || Number(b.operator_id) === Number(aktor.id),
-  }));
+      bolehSayaLengkapi:
+        aktor.role === 'SPV' || Number(b.operator_id) === Number(aktor.id),
+    };
+  });
 
   return {
     data: daftar,

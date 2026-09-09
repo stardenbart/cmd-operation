@@ -12,6 +12,29 @@
  */
 const kosong = (v) => v === null || v === undefined || v === '';
 
-export function prepastPerluDilengkapi({ prepastFinish, flowrate, tempAfterHeater, tempOutput }) {
-  return kosong(prepastFinish) || kosong(flowrate) || kosong(tempAfterHeater) || kosong(tempOutput);
+export const FIELD_KELENGKAPAN_PREPAST = Object.freeze([
+  { key: 'prepastFinish', label: 'Waktu Selesai' },
+  { key: 'flowrate', label: 'Flowrate' },
+  { key: 'tempAfterHeater', label: 'Temp After Heater' },
+  { key: 'tempOutput', label: 'Temp Output' },
+]);
+
+/**
+ * Mengembalikan status beserta nama field yang masih harus dilengkapi.
+ * Nilai nol tetap dianggap terisi; hanya NULL/undefined/string kosong yang
+ * berarti operator belum memasukkan hasil pengukuran.
+ */
+export function statusKelengkapanPrepast(nilai) {
+  const field = Object.prototype.hasOwnProperty.call(nilai ?? {}, 'prepastStart')
+    ? [{ key: 'prepastStart', label: 'Waktu Mulai' }, ...FIELD_KELENGKAPAN_PREPAST]
+    : FIELD_KELENGKAPAN_PREPAST;
+  const fieldKosong = field
+    .filter(({ key }) => kosong(nilai?.[key]))
+    .map(({ key, label }) => ({ key, label }));
+
+  return { isGantung: fieldKosong.length > 0, fieldKosong };
+}
+
+export function prepastPerluDilengkapi(nilai) {
+  return statusKelengkapanPrepast(nilai).isGantung;
 }

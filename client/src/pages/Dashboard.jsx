@@ -74,7 +74,14 @@ function PengingatGantung() {
             <tr key={`${d.modul}-${d.id}`}>
               <td>{NAMA[d.modul] ?? d.modul}</td>
               <td className="angka">{d.kode}</td>
-              <td>{d.tempat}</td>
+              <td>
+                {d.tempat}
+                {d.fieldKosong?.length > 0 && (
+                  <div className="bantuan">
+                    Kurang: {d.fieldKosong.map((f) => f.label).join(', ')}
+                  </div>
+                )}
+              </td>
               <td className="num">{d.volumeLtr === null ? '—' : fmt(d.volumeLtr)}</td>
               <td>{d.operatorNama}</td>
               <td className="num">{d.usiaJam} jam</td>
