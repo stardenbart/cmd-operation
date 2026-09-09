@@ -1,0 +1,18 @@
+{
+  "name": "CMD 1 Operation",
+  "short_name": "CMD1 Op",
+  "description": "Fresh Milk Receiving - Plant Sentul 1",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#16265c",
+  "lang": "id",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" },
+    { "src": "/Logo_Cimory.png", "sizes": "600x320", "type": "image/png", "purpose": "any" }
+  ]
+}

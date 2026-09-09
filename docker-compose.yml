@@ -1,0 +1,92 @@
+# FM Receiving — stack on-prem (NFR-15)
+# Nginx + Node + MySQL. Satu perintah untuk nyala, satu untuk rollback.
+
+services:
+  mysql:
+    # Nama registry eksplisit diperlukan oleh Podman pada server on-prem yang
+    # tidak memiliki konfigurasi unqualified-search registry.
+    image: docker.io/library/mysql:8.4
+    container_name: fm_mysql
+    restart: unless-stopped
+    command:
+      # NFR-19: mati listrik tidak boleh merusak basis data.
+      # flush setiap commit — lebih lambat, tapi tidak ada transaksi hilang.
+      - --innodb-flush-log-at-trx-commit=1
+      # Seluruh timestamp disimpan UTC (A-4). Konversi zona waktu di lapis aplikasi.
+      - --default-time-zone=+00:00
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # REPEATABLE READ diperlukan agar SELECT ... FOR UPDATE pada alokasi FIFO
+      # melihat snapshot yang konsisten sepanjang transaksi (M-5).
+      - --transaction-isolation=REPEATABLE-READ
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?wajib diisi di .env}
+      MYSQL_DATABASE: ${DB_NAME:-fm_receiving}
+      MYSQL_USER: ${DB_USER:-fm_app}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?wajib diisi di .env}
+      TZ: UTC
+    ports:
+      # Port host dapat diubah lewat DB_HOST_PORT bila 3306 sudah dipakai
+      # instalasi MySQL lain di mesin pengembang. Di dalam jaringan Docker
+      # tetap 3306, sehingga service lain tidak perlu tahu.
+      # Terikat ke 127.0.0.1 — basis data tidak pernah terbuka ke jaringan.
+      - "127.0.0.1:${DB_HOST_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/backup:/backup
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: fm_server
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-fm_receiving}
+      DB_USER: ${DB_USER:-fm_app}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?wajib diisi di .env}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      # Zona proses harus sama dengan zona pabrik. Timestamp database tetap UTC;
+      # konversi/validasi datetime-local berlangsung di Asia/Jakarta.
+      TZ: ${APP_TIMEZONE:-Asia/Jakarta}
+    volumes:
+      - ./export-output:/app/export-output
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  nginx:
+    image: docker.io/library/nginx:1.27-alpine
+    container_name: fm_nginx
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - ./client/dist:/usr/share/nginx/html:ro
+
+volumes:
+  mysql_data:
+    driver: local

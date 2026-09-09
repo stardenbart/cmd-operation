@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CMD 1 Operation">
+  <!-- Latar penuh (maskable): konten penting dijaga di dalam 80% tengah. -->
+  <rect width="512" height="512" fill="#16265c"/>
+  <rect width="512" height="512" fill="url(#g)"/>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c3d78"/>
+      <stop offset="1" stop-color="#142d60"/>
+    </linearGradient>
+    <linearGradient id="tetes" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e7eefc"/>
+    </linearGradient>
+  </defs>
+  <!-- Tetes susu -->
+  <path d="M256 120 C 322 210, 350 258, 350 300 a 94 94 0 1 1 -188 0 c 0 -42, 28 -90, 94 -180 Z" fill="url(#tetes)"/>
+  <path d="M214 300 a 42 42 0 0 0 42 42" fill="none" stroke="#9fb4dc" stroke-width="12" stroke-linecap="round" opacity="0.7"/>
+  <!-- Wordmark -->
+  <text x="256" y="452" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="70" font-weight="800" fill="#ffffff" letter-spacing="2">CMD1</text>
+</svg>

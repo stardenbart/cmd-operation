@@ -1,0 +1,169 @@
+/* ============================================================
+   Token warna — CMD 1 Operation
+
+   Mengikuti sistem visual aplikasi Cimory yang sudah berjalan
+   (Central of Digitalization, Digital Approval Label), lihat
+   reference/UI. Tujuannya bukan kemiripan estetis semata: operator
+   yang sama berpindah antar aplikasi dalam satu shift, dan warna
+   yang berbeda-beda membuat setiap perpindahan menuntut orientasi
+   ulang.
+
+   Dua warna merek yang membawa identitas itu:
+     navy    — kop, navigasi, judul
+     crimson — aksen tindakan dan penekanan
+
+   Keduanya TIDAK PERNAH dipakai sebagai warna seri data: warna merek
+   dipilih untuk identitas, bukan untuk keterpisahan.
+
+   Palet kategorikal di bawah SUDAH DIVALIDASI pada kedua mode:
+     Terang : CVD ΔE terburuk 9,1 (≥8) · penglihatan normal 22,9 (≥15)
+     Gelap  : CVD ΔE terburuk 8,4 (≥8) · penglihatan normal 19,8 (≥15)
+
+   Jangan mengganti nilai seri tanpa menjalankan ulang validator.
+   Urutan slot adalah mekanisme keamanan buta warna, bukan kosmetik.
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* --- Permukaan & tinta --- */
+  --surface-1:      #ffffff;
+  --surface-2:      #f7f9fc;
+  --surface-page:   #f2f5fa;
+  --text-primary:   #17366f;
+  --text-body:      #243148;
+  --text-secondary: #60708a;
+  --text-muted:     #8592a8;
+  --gridline:       #e7ebf2;
+  --axis:           #cbd3e1;
+  --border:         #e3e8f0;
+
+  /* --- Warna korporat CMD --- */
+  --brand-navy:      #17366f;
+  --brand-navy-2:    #214b91;
+  --brand-crimson:   #ed3347;
+  --brand-crimson-2: #d92339;
+  --brand-primary:   var(--brand-navy);
+  --brand-slate:     #64748b;
+
+  /* Kop dan tombol utama memakai gradien yang sama seperti aplikasi
+     Cimory lain: navy di kiri, crimson di kanan. */
+  --gradien-kop: linear-gradient(105deg, #17366f 0%, #2a3c78 47%, #ed3347 100%);
+  --gradien-aksi: linear-gradient(135deg, #ed3347 0%, #d92339 100%);
+
+  /* --- Kategorikal (dipakai berurutan, tidak pernah diputar) --- */
+  --series-1: #2a78d6;  /* biru   — penerimaan / masuk */
+  --series-2: #eb6834;  /* jingga — transfer / keluar */
+  --series-3: #1baf7a;  /* toska  — prepast */
+  --series-4: #eda100;  /* kuning — pindah silo */
+
+  /* --- Sekuensial (besaran) --- */
+  --seq-100: #cde2fb;
+  --seq-250: #86b6ef;
+  --seq-400: #3987e5;
+  --seq-550: #1c5cab;
+  --seq-700: #0d366b;
+
+  /* --- Divergen --- */
+  --div-pos:     #2a78d6;
+  --div-neutral: #eef1f6;
+  --div-neg:     #e34948;
+
+  /* --- Status (tidak pernah jadi warna seri; selalu + ikon & label) --- */
+  --status-good:     #12855b;
+  --status-warning:  #b7791f;
+  --status-serious:  #d97036;
+  --status-critical: #c81e2c;
+
+  --status-good-bg:     #e8f6ef;
+  --status-warning-bg:  #fdf4e3;
+  --status-critical-bg: #fdecec;
+  --status-info-bg:     #eaf0fb;
+
+  --font-sans: 'Aptos', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* Mode gelap DIPILIH tersendiri dari ramp yang sama —
+   bukan pembalikan otomatis. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --surface-1:      #131a2e;
+    --surface-2:      #182137;
+    --surface-page:   #0b1020;
+    --text-primary:   #e8edf7;
+    --text-body:      #dbe3f0;
+    --text-secondary: #9aa8c2;
+    --text-muted:     #6f7f9e;
+    --gridline:       #24304b;
+    --axis:           #33415f;
+    --border:         #24304b;
+
+    --brand-primary:  #4d6bb5;
+    --gradien-kop: linear-gradient(100deg, #101a38 0%, #23264d 42%, #9c1523 100%);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+
+    --div-neutral: #24304b;
+
+    --status-good:     #34c98d;
+    --status-warning:  #e0aa4a;
+    --status-serious:  #e08a52;
+    --status-critical: #f0656f;
+
+    --status-good-bg:     #12301f;
+    --status-warning-bg:  #33270f;
+    --status-critical-bg: #3a161a;
+    --status-info-bg:     #182137;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface-1:      #131a2e;
+  --surface-2:      #182137;
+  --surface-page:   #0b1020;
+  --text-primary:   #e8edf7;
+  --text-body:      #dbe3f0;
+  --text-secondary: #9aa8c2;
+  --text-muted:     #6f7f9e;
+  --gridline:       #24304b;
+  --axis:           #33415f;
+  --border:         #24304b;
+
+  --brand-primary:  #4d6bb5;
+  --gradien-kop: linear-gradient(100deg, #101a38 0%, #23264d 42%, #9c1523 100%);
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+
+  --div-neutral: #24304b;
+
+  --status-good:     #34c98d;
+  --status-warning:  #e0aa4a;
+  --status-serious:  #e08a52;
+  --status-critical: #f0656f;
+
+  --status-good-bg:     #12301f;
+  --status-warning-bg:  #33270f;
+  --status-critical-bg: #3a161a;
+  --status-info-bg:     #182137;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--surface-page);
+  color: var(--text-body);
+  /* Target utama tablet di lantai produksi — area sentuh minimum 44px (NFR-8) */
+  -webkit-text-size-adjust: 100%;
+}
+
+button, input, select, textarea { font: inherit; }

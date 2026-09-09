@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.npm/
+
+# Build
+dist/
+build/
+client/dist/
+
+# Environment — JANGAN pernah commit kredensial
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+
+# Data runtime
+db/data/
+db/backup/
+export-output/
+logs/
+*.log
+output/
+.playwright-cli/
+.remember/
+
+# Database dumps and production/reference data
+db/backup/
+deploy/dump/
+reference/
+ref/
+fm_receiving_*.sql
+
+# OneDrive / OS
+desktop.ini
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Test
+coverage/
+.nyc_output/
+
+.vercel
