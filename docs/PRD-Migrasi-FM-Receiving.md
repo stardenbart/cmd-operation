@@ -915,6 +915,7 @@ FR-29 memperbaiki satu bentuk pengulangan. Menelusuri seluruh alur input, ditemu
 | FR-30.4 | **Prefill waktu berantai** | Sebagian sudah ada — jam mulai prepast terisi dari finish penerimaan | Diperluas dan dikonsistenkan: jam mulai prepast berikutnya = jam selesai prepast sebelumnya di jalur yang sama | P1 |
 | FR-30.5 | **Nilai berulang antar hari** | Flowrate dan suhu diketik ulang tiap batch meski nilainya nyaris tetap | Nilai terakhir ditawarkan sebagai default yang dapat ditimpa, ditandai jelas sebagai saran | P2 |
 | FR-30.6 | **Stock opname bulanan** | Seluruh silo diisi dari nol tiap periode | Tawarkan volume aktual sistem sebagai nilai awal — operator mengoreksi selisihnya, tidak mengetik dari kosong | P1 |
+| FR-30.7 | **Batch transfer multi-baris** | Batch yang sama diketik ulang pada setiap transfer tambahan | Operator memilih `Batch sama` untuk mengisi prefiks + nomor sekali bagi seluruh tank beraturan `PILIH`, atau `Manual per transfer` untuk mengisi batch berbeda pada tiap baris. Aturan `CMD2`, tanpa batch, dan pindah silo tetap ditentukan sistem. | P1 |
 
 **FR-30.1 patut didahulukan.** Monitoring adalah aktivitas paling sering di seluruh sistem — 8 silo × 7 kali cek sehari berarti sampai 56 kali pengisian form per hari, masing-masing mengulang pemilihan silo dan penulisan waktu. Menggabungkannya menjadi satu form ronde memangkas beban itu menjadi 7 kali.
 
