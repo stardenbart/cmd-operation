@@ -48,12 +48,15 @@ export function validasiQuery(skema) {
  * sendiri. Di Power Apps, `Substitute(text, ",", ".")` tersebar di belasan
  * formula dan sebagian terlewat.
  */
-export const angkaDesimal = ({ min = 0, maxDecimals } = {}) =>
+export const angkaDesimal = ({ min = 0, maxDecimals, inclusive = false } = {}) =>
   z.union([z.string(), z.number()]).transform((v, ctx) => {
     try {
       const n = parseAngka(v);
-      if (n <= min) {
-        ctx.addIssue({ code: 'custom', message: `harus lebih besar dari ${min}` });
+      if (inclusive ? n < min : n <= min) {
+        ctx.addIssue({
+          code: 'custom',
+          message: inclusive ? `minimal ${min}` : `harus lebih besar dari ${min}`,
+        });
         return z.NEVER;
       }
       if (maxDecimals !== undefined) {

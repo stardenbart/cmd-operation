@@ -39,8 +39,9 @@ export function kontinuDalamSilo(sebelumnya, berikutnya) {
 }
 
 /** Record Prepast terakhir di seluruh plant, tidak dibatasi silo tujuan. */
-export async function recordTerakhir(conn, { kunci = false } = {}) {
+export async function recordTerakhir(conn, { kunci = false, excludeId = null } = {}) {
   const eksekutor = conn ?? pool;
+  const kecualikan = excludeId == null ? '' : 'AND p.id <> ?';
   const [baris] = await eksekutor.query(
     `SELECT p.id, p.kode, p.silo_tujuan_id AS siloId,
             p.prepast_start AS start, p.prepast_finish AS finish,
@@ -55,9 +56,10 @@ export async function recordTerakhir(conn, { kunci = false } = {}) {
         AND COALESCE(p.jenis_batch, 'PREPAST') = 'PREPAST'
         AND p.prepast_finish IS NOT NULL
         AND p.status_approval IN (?, ?)
+        ${kecualikan}
       ORDER BY p.prepast_finish DESC, p.id DESC
       LIMIT 1${kunci ? ' FOR UPDATE' : ''}`,
-    STATUS_NYATA,
+    excludeId == null ? STATUS_NYATA : [...STATUS_NYATA, excludeId],
   );
   return baris[0] ?? null;
 }

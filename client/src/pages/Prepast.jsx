@@ -53,7 +53,10 @@ export default function Prepast() {
       const d = res.data;
       setSukses(
         `${d.dibuat.length} record dibuat: ${d.dibuat.map((x) => x.kode).join(', ')}. ` +
-        `Total ${fmt(d.totalLtr)} L. Sisa batch induk ${fmt(d.sisaBatchIndukLtr)} L.`,
+        `Total ${fmt(d.totalLtr)} L. Sisa batch induk ${fmt(d.sisaBatchIndukLtr)} L.` +
+        (d.gantung
+          ? ` Perlu dilengkapi: ${d.fieldKosong.map((f) => f.label).join(', ')}.`
+          : ' Data proses lengkap.'),
       );
       setBatch(null);
       setPecahan([{ siloId: '', volumeLtr: '' }]);
@@ -89,6 +92,23 @@ export default function Prepast() {
   function kirim(e) {
     e.preventDefault();
     setSukses(null);
+    let konfirmasiRollover = false;
+    if (proses.prepastFinish && proses.prepastStart
+      && proses.prepastFinish <= proses.prepastStart) {
+      konfirmasiRollover = window.confirm(
+        'Waktu selesai lebih awal dari waktu mulai. Konfirmasi bahwa proses melewati tengah malam.',
+      );
+      if (!konfirmasiRollover) return;
+    }
+
+    let konfirmasiOprp = false;
+    if (tempRendah) {
+      konfirmasiOprp = window.confirm(
+        `Temp After Heater ${angka(proses.tempAfterHeater)} °C di bawah ambang OPRP ${OPRP_MIN} °C. Tetap simpan?`,
+      );
+      if (!konfirmasiOprp) return;
+    }
+
     // Waktu Selesai kosong dikirim sebagai tidak-ada, bukan string kosong:
     // itulah yang membuat record MENGGANTUNG, bukan ditolak validasi.
     const { prepastFinish, ...prosesTanpaFinish } = proses;
@@ -99,10 +119,8 @@ export default function Prepast() {
         .map((p) => ({ siloId: Number(p.siloId), volumeLtr: p.volumeLtr })),
       ...prosesTanpaFinish,
       ...(prepastFinish ? { prepastFinish } : {}),
-      // Konfirmasi dikirim hanya bila operator sudah melihat peringatannya.
-      // Rollover & OPRP tidak pernah diterapkan diam-diam (FR-13.2, FR-5.10).
-      konfirmasiRollover: true,
-      konfirmasiOprp: tempRendah,
+      konfirmasiRollover,
+      konfirmasiOprp,
       kontinu,
       continuityPreviousId: kontinu ? sebelumnya?.id : undefined,
     });

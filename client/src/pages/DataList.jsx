@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
 import { fmt, waktuSingkat, Field, Lencana, PesanGalat, PesanSukses, Kosong } from '../components/ui.jsx';
 import DialogKoreksi from '../components/DialogKoreksi.jsx';
+import DialogLengkapiPrepast from '../components/DialogLengkapiPrepast.jsx';
 import DialogAjukanKoreksi from '../components/DialogAjukanKoreksi.jsx';
 import { PilihBanyakCari } from '../components/pilih.jsx';
 
@@ -477,11 +478,19 @@ export default function DataList() {
 
       {koreksiTarget && (
         <div ref={panelRef}>
-          <DialogKoreksi
-            target={koreksiTarget}
-            onTutup={() => setKoreksiTarget(null)}
-            onSukses={(pesan) => { setSukses(pesan); setKoreksiTarget(null); }}
-          />
+          {koreksiTarget.bolehLengkapi ? (
+            <DialogLengkapiPrepast
+              target={koreksiTarget}
+              onTutup={() => setKoreksiTarget(null)}
+              onSukses={(pesan) => { setSukses(pesan); setKoreksiTarget(null); }}
+            />
+          ) : (
+            <DialogKoreksi
+              target={koreksiTarget}
+              onTutup={() => setKoreksiTarget(null)}
+              onSukses={(pesan) => { setSukses(pesan); setKoreksiTarget(null); }}
+            />
+          )}
         </div>
       )}
 

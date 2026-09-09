@@ -16,13 +16,42 @@ import { catatAudit } from './audit.js';
 import { validasiPecahan } from './pecahanSilo.js';
 import { deteksiRollover } from './waktu.js';
 import { kontinu as adalahKontinu, menit, recordTerakhir } from './kontinuitasPrepast.js';
-import { prepastPerluDilengkapi } from './prepastGantung.js';
-import { BusinessError, NotFoundError, AppError } from '../middleware/errors.js';
+import { statusKelengkapanPrepast } from './prepastGantung.js';
+import { BusinessError, NotFoundError, ForbiddenError } from '../middleware/errors.js';
 
 const STATUS_DIABAIKAN = ['Rejected', 'REVISED', 'VOIDED'];
 
 /** Ambang OPRP dari catatan kaki form GMP: min 81 °C (FR-5.10). */
 const OPRP_TEMP_MIN = 81;
+
+function normalisasiWaktuSelesai(prepastStart, prepastFinish, konfirmasiRollover) {
+  if (!prepastFinish) return null;
+  const roll = deteksiRollover(prepastStart, prepastFinish);
+  if (roll.perluRollover) {
+    if (!konfirmasiRollover) {
+      throw new BusinessError(
+        'BR-11',
+        'Waktu selesai lebih awal daripada waktu mulai. Apakah prosesnya melewati tengah malam?',
+        { saranSelesai: roll.saranSelesai, konfirmasiDiperlukan: 'konfirmasiRollover' },
+      );
+    }
+    return roll.saranSelesai;
+  }
+  if (roll.alasan) {
+    throw new BusinessError('BR-11', `Waktu selesai tidak wajar: ${roll.alasan}`);
+  }
+  return prepastFinish;
+}
+
+function validasiOprp(tempAfterHeater, konfirmasiOprp) {
+  if (tempAfterHeater != null && tempAfterHeater < OPRP_TEMP_MIN && !konfirmasiOprp) {
+    throw new BusinessError(
+      'FR-5.10',
+      `Temp After Heater ${tempAfterHeater} °C di bawah ambang OPRP ${OPRP_TEMP_MIN} °C`,
+      { ambang: OPRP_TEMP_MIN, konfirmasiDiperlukan: 'konfirmasiOprp' },
+    );
+  }
+}
 
 /**
  * Antrean buffer siap prepast — FR-5.1.
@@ -84,64 +113,25 @@ export async function buat(masukan, aktor, ip) {
     tempAfterHeater,
     tempOutput,
     remarks,
-    isDraft = false,
     konfirmasiRollover = false,
     konfirmasiOprp = false,
     kontinu = false,
     continuityPreviousId,
   } = masukan;
 
-  /*
-   * BR-23 - Waktu Mulai WAJIB, Waktu Selesai boleh menyusul.
-   *
-   * Prepast kontinu kerap dicatat begitu proses dimulai: waktu mulainya sudah
-   * pasti, tetapi selesainya baru diketahui belakangan. Record semacam itu
-   * disimpan MENGGANTUNG - masuk daftar "Perlu dilengkapi", tidak dapat
-   * disetujui, dan tidak ikut perhitungan kontinuitas sampai selesainya diisi.
-   * `isDraft` mempertahankan jalur draft lama yang bahkan belum punya waktu
-   * mulai sama sekali.
-   */
-  if (!isDraft && !prepastStart) {
+  // Waktu Mulai selalu wajib. Empat data proses lain boleh menyusul dan masing-
+  // masing disimpan apa adanya; satu field kosong membuat record menggantung.
+  if (!prepastStart) {
     throw new BusinessError('PREPAST_START_REQUIRED', 'Waktu Mulai wajib diisi.');
   }
-  // Menggantung selama data proses belum lengkap - Waktu Selesai, Flowrate,
-  // Temp After Heater, atau Temp Output masih kosong (BR-23, satu aturan di
-  // prepastGantung.js).
-  const gantung = isDraft
-    || prepastPerluDilengkapi({ prepastFinish, flowrate, tempAfterHeater, tempOutput });
-
-  let finishFinal = prepastFinish ?? null;
-
-  if (!gantung) {
-    // BR-11 — rollover DISARANKAN, tidak diterapkan diam-diam (FR-13.2)
-    const roll = deteksiRollover(prepastStart, prepastFinish);
-    if (roll.perluRollover) {
-      if (!konfirmasiRollover) {
-        throw new BusinessError(
-          'BR-11',
-          'Waktu selesai lebih awal daripada waktu mulai. Apakah prosesnya melewati tengah malam?',
-          {
-            saranSelesai: roll.saranSelesai,
-            konfirmasiDiperlukan: 'konfirmasiRollover',
-          },
-        );
-      }
-      finishFinal = roll.saranSelesai;
-    } else if (roll.alasan) {
-      throw new BusinessError('BR-11', `Waktu selesai tidak wajar: ${roll.alasan}`);
-    }
-
-    // FR-5.10 — OPRP: titik kendali keamanan pangan dari catatan kaki form.
-    // Di bawah ambang tidak diblokir (prosesnya sudah terjadi), tetapi
-    // menuntut pengakuan sadar sehingga tidak lolos tanpa disadari.
-    if (tempAfterHeater != null && tempAfterHeater < OPRP_TEMP_MIN && !konfirmasiOprp) {
-      throw new BusinessError(
-        'FR-5.10',
-        `Temp After Heater ${tempAfterHeater} °C di bawah ambang OPRP ${OPRP_TEMP_MIN} °C`,
-        { ambang: OPRP_TEMP_MIN, konfirmasiDiperlukan: 'konfirmasiOprp' },
-      );
-    }
-  }
+  const finishFinal = normalisasiWaktuSelesai(
+    prepastStart, prepastFinish ?? null, konfirmasiRollover,
+  );
+  validasiOprp(tempAfterHeater, konfirmasiOprp);
+  const kelengkapan = statusKelengkapanPrepast({
+    prepastStart, prepastFinish: finishFinal, flowrate, tempAfterHeater, tempOutput,
+  });
+  const gantung = kelengkapan.isGantung;
 
   return withTransaction(async (conn) => {
     // Kunci batch induk: dua operator tidak boleh memprepast sisa yang sama
@@ -159,6 +149,14 @@ export async function buat(masukan, aktor, ip) {
         'BR-01',
         `Batch berstatus ${induk.status_approval} tidak dapat diprepast`,
       );
+    }
+
+    // Kunci silo tujuan dalam urutan tetap. Tanpa ini, dua receiving berbeda
+    // dapat membaca kapasitas lama silo yang sama dan keduanya lolos validasi.
+    const siloIds = [...new Set(pecahan.map((p) => Number(p.siloId)))].sort((a, b) => a - b);
+    const tempat = siloIds.map(() => '?').join(', ');
+    if (siloIds.length) {
+      await conn.query(`SELECT id FROM silo WHERE id IN (${tempat}) ORDER BY id FOR UPDATE`, siloIds);
     }
 
     // Kapasitas tersisa per silo, dibaca di dalam transaksi
@@ -198,9 +196,9 @@ export async function buat(masukan, aktor, ip) {
 
     const dibuat = [];
     let kontinuitas = { sebelumnya: null, tersambung: false };
-    // Kontinuitas hanya diperiksa saat Waktu Selesai sudah ada; record yang
-    // masih menggantung divalidasi ulang ketika dilengkapi.
-    if (!gantung) {
+    // Kontinuitas bergantung pada Waktu Mulai, bukan pada lengkapnya hasil ukur.
+    // Karena itu record parsial tetap tidak boleh overlap dengan proses terakhir.
+    {
       const sebelumnya = await recordTerakhir(conn, { kunci: true });
       const mulaiMenit = menit(prepastStart);
       const finishMenit = menit(sebelumnya?.finish);
@@ -253,10 +251,8 @@ export async function buat(masukan, aktor, ip) {
         [
           kode, receivingId, induk.sup_id, p.siloId,
           p.volumeLtr, p.volumeLtr,
-          // Waktu Mulai disimpan bila ada - hanya draft penuh yang menyimpannya
-          // null. Record menggantung tetap menyimpan mulainya.
-          isDraft ? null : prepastStart,
-          gantung ? null : finishFinal,
+          prepastStart,
+          finishFinal,
           kontinuitas.tersambung ? kontinuitas.sebelumnya?.id ?? null : null,
           false,
           null,
@@ -266,9 +262,9 @@ export async function buat(masukan, aktor, ip) {
         ],
       );
 
-      // BR-09 — anchor di-set hanya bila silo tujuan belum punya anchor,
-      // dan hanya bila waktu selesai memang terisi.
-      if (!gantung && !infoSilo.get(p.siloId).standing_time_anchor) {
+      // Anchor bergantung pada waktu susu selesai masuk silo, bukan pada
+      // lengkapnya flowrate/suhu. Data ukur lain boleh tetap menggantung.
+      if (finishFinal && !infoSilo.get(p.siloId).standing_time_anchor) {
         await conn.query(
           'UPDATE silo SET standing_time_anchor = ? WHERE id = ? AND standing_time_anchor IS NULL',
           [finishFinal, p.siloId],
@@ -315,6 +311,7 @@ export async function buat(masukan, aktor, ip) {
       // `draft` dipertahankan sebagai nama lama; kini artinya "menggantung".
       draft: gantung,
       gantung,
+      fieldKosong: kelengkapan.fieldKosong,
       // BR-24 — baris yang melampaui kapasitas nominal namun masih sah
       melampauiNominal: hasilValidasi.melampauiNominal,
       rolloverDiterapkan: finishFinal?.getTime?.() !== prepastFinish?.getTime?.(),
@@ -337,26 +334,62 @@ export async function dependensi(id) {
   return baris;
 }
 
-/**
- * Melengkapi record draft — BR-16, FR-19.
- *
- * Satu-satunya jalur update di tempat tanpa reversal. Sah karena draft belum
- * pernah masuk antrean approval (BR-23).
- */
-export async function lengkapiDraft(id, {
-  prepastStart, prepastFinish, flowrate, tempAfterHeater, tempOutput,
-  konfirmasiRollover = false, kontinu = false, continuityPreviousId,
-}, aktor, ip) {
-  const roll = deteksiRollover(prepastStart, prepastFinish);
-  if (roll.perluRollover && !konfirmasiRollover) {
+function pastikanBolehLengkapi(lama, aktor) {
+  if (lama.jenis_batch !== 'PREPAST') {
+    throw new BusinessError('VALIDATION_ERROR', 'Record ini bukan Prepast.');
+  }
+  if (!lama.is_gantung) {
+    throw new BusinessError('BUKAN_DRAFT', 'Record ini sudah lengkap. Gunakan koreksi biasa.');
+  }
+  if (!['Pending Approval', 'Rejected'].includes(lama.status_approval)) {
     throw new BusinessError(
-      'BR-11',
-      'Waktu selesai lebih awal daripada waktu mulai. Apakah prosesnya melewati tengah malam?',
-      { saranSelesai: roll.saranSelesai, konfirmasiDiperlukan: 'konfirmasiRollover' },
+      'BR-19',
+      `${lama.kode} berstatus ${lama.status_approval} dan tidak dapat dilengkapi`,
     );
   }
-  const finishFinal = roll.perluRollover ? roll.saranSelesai : prepastFinish;
+  const milikSendiri = Number(lama.operator_id) === Number(aktor.id);
+  if (aktor.role !== 'SPV' && !milikSendiri) {
+    throw new ForbiddenError('Operator hanya dapat melengkapi record Prepast miliknya sendiri.');
+  }
+}
 
+function bentukKonteksKelengkapan(record) {
+  const kelengkapan = statusKelengkapanPrepast({
+    prepastStart: record.prepast_start,
+    prepastFinish: record.prepast_finish,
+    flowrate: record.flowrate_pst,
+    tempAfterHeater: record.temp_after_heater,
+    tempOutput: record.temp_output_prd,
+  });
+  return {
+    id: record.id,
+    kode: record.kode,
+    prepastStart: record.prepast_start,
+    prepastFinish: record.prepast_finish,
+    flowrate: record.flowrate_pst,
+    tempAfterHeater: record.temp_after_heater,
+    tempOutput: record.temp_output_prd,
+    kontinu: Boolean(record.continuity_previous_id),
+    continuityPreviousId: record.continuity_previous_id,
+    isGantung: kelengkapan.isGantung,
+    fieldKosong: kelengkapan.fieldKosong,
+  };
+}
+
+/** Konteks untuk dialog pelengkapan; otorisasi tetap diperiksa di server. */
+export async function konteksPelengkapan(id, aktor) {
+  const [baris] = await pool.query('SELECT * FROM prepast_record WHERE id = ?', [id]);
+  if (!baris[0]) throw new NotFoundError('Prepast');
+  pastikanBolehLengkapi(baris[0], aktor);
+  return bentukKonteksKelengkapan(baris[0]);
+}
+
+/**
+ * Melengkapi record secara bertahap — BR-16.
+ * Field yang tidak dikirim mempertahankan nilai lama; record baru keluar dari
+ * Dashboard setelah keempat data proses terisi.
+ */
+export async function lengkapiDraft(id, perubahan, aktor, ip) {
   return withTransaction(async (conn) => {
     const [baris] = await conn.query(
       'SELECT * FROM prepast_record WHERE id = ? FOR UPDATE',
@@ -364,63 +397,93 @@ export async function lengkapiDraft(id, {
     );
     const lama = baris[0];
     if (!lama) throw new NotFoundError('Prepast');
-    if (!lama.is_gantung) {
-      throw new AppError('Record ini bukan draft. Gunakan koreksi biasa.', {
-        code: 'BUKAN_DRAFT',
-      });
+    pastikanBolehLengkapi(lama, aktor);
+
+    const prepastStart = perubahan.prepastStart ?? lama.prepast_start;
+    const finishMasukan = perubahan.prepastFinish ?? lama.prepast_finish;
+    const flowrate = perubahan.flowrate ?? lama.flowrate_pst;
+    const tempAfterHeater = perubahan.tempAfterHeater ?? lama.temp_after_heater;
+    const tempOutput = perubahan.tempOutput ?? lama.temp_output_prd;
+
+    if (!prepastStart) {
+      throw new BusinessError('PREPAST_START_REQUIRED', 'Waktu Mulai wajib diisi.');
     }
 
-    const sebelumnya = await recordTerakhir(conn, { kunci: true });
-    // Sama seperti pada buat(): tarikan co-temporal dengan record terakhir sah.
-    const coTemporal = sebelumnya && menit(prepastStart) === menit(sebelumnya.start);
-    if (sebelumnya && !coTemporal && menit(prepastStart) < menit(sebelumnya.finish)) {
-      throw new BusinessError(
-        'PREPAST_START_OVERLAP',
-        `Waktu Mulai tidak boleh lebih awal dari Finish Prepast terakhir ${sebelumnya.kode}.`,
-        { sebelumnya, saranStart: sebelumnya.finish },
-      );
-    }
-    if (kontinu && !sebelumnya) {
-      throw new BusinessError('PREPAST_CONTINUITY_UNAVAILABLE', 'Belum ada record Prepast sebelumnya untuk disambungkan.');
-    }
-    if (kontinu && Number(continuityPreviousId) !== Number(sebelumnya?.id)) {
-      throw new BusinessError(
-        'PREPAST_CONTINUITY_STALE',
-        'Record Prepast terakhir berubah. Periksa kembali waktu mulai sebelum submit.',
-        { sebelumnya, saranStart: sebelumnya?.finish ?? null },
-      );
-    }
-    const tersambung = adalahKontinu(sebelumnya, { start: prepastStart });
-    if (kontinu && !tersambung) {
-      throw new BusinessError(
-        'PREPAST_NOT_CONTINUOUS',
-        'Waktu Mulai kontinu harus sama dengan Finish record Prepast terakhir.',
-      );
+    const finishFinal = normalisasiWaktuSelesai(
+      prepastStart, finishMasukan, perubahan.konfirmasiRollover ?? false,
+    );
+    validasiOprp(tempAfterHeater, perubahan.konfirmasiOprp ?? false);
+
+    /*
+     * Melengkapi hasil ukur tidak boleh divalidasi ulang terhadap "record
+     * terakhir saat ini". Bisa saja record ini dibuat pukul 07.00, lalu baru
+     * diisi flowrate-nya setelah proses pukul 09.00 tercatat. Relasi waktunya
+     * sudah sah saat CREATE; mencari record terakhir lagi justru membuat
+     * record pukul 07.00 ditolak karena dianggap mundur dari pukul 09.00.
+     *
+     * Validasi kontinuitas hanya diulang bila Waktu Mulai atau pilihan
+     * kontinuitas benar-benar berubah. Waktu selesai dan hasil ukur dapat
+     * menyusul tanpa merusak relasi yang sudah tersimpan.
+     */
+    const startBerubah = menit(prepastStart) !== menit(lama.prepast_start);
+    const kontinuitasDiubah = perubahan.kontinu !== undefined
+      || perubahan.continuityPreviousId !== undefined;
+    let continuityPreviousIdBaru = lama.continuity_previous_id;
+
+    if (startBerubah || kontinuitasDiubah) {
+      const sebelumnya = await recordTerakhir(conn, { kunci: true, excludeId: id });
+      const coTemporal = sebelumnya && menit(prepastStart) === menit(sebelumnya.start);
+      if (sebelumnya && !coTemporal && menit(prepastStart) < menit(sebelumnya.finish)) {
+        throw new BusinessError(
+          'PREPAST_START_OVERLAP',
+          `Waktu Mulai tidak boleh lebih awal dari Finish Prepast terakhir ${sebelumnya.kode}.`,
+          { sebelumnya, saranStart: sebelumnya.finish },
+        );
+      }
+
+      const kontinu = perubahan.kontinu ?? Boolean(lama.continuity_previous_id);
+      const continuityPreviousId = perubahan.continuityPreviousId
+        ?? lama.continuity_previous_id;
+      if (kontinu && !sebelumnya) {
+        throw new BusinessError('PREPAST_CONTINUITY_UNAVAILABLE', 'Belum ada record Prepast sebelumnya untuk disambungkan.');
+      }
+      if (kontinu && Number(continuityPreviousId) !== Number(sebelumnya?.id)) {
+        throw new BusinessError(
+          'PREPAST_CONTINUITY_STALE',
+          'Record Prepast terakhir berubah. Periksa kembali waktu mulai sebelum submit.',
+          { sebelumnya, saranStart: sebelumnya?.finish ?? null },
+        );
+      }
+      const tersambung = adalahKontinu(sebelumnya, { start: prepastStart });
+      if (kontinu && !tersambung) {
+        throw new BusinessError(
+          'PREPAST_NOT_CONTINUOUS',
+          'Waktu Mulai kontinu harus sama dengan Finish record Prepast terakhir.',
+        );
+      }
+      continuityPreviousIdBaru = kontinu && tersambung ? sebelumnya?.id ?? null : null;
     }
 
-    // Tetap menggantung bila Flowrate / Temp After Heater / Temp Output masih
-    // kosong meski waktunya sudah dilengkapi (satu aturan di prepastGantung.js).
-    const gantungBaru = prepastPerluDilengkapi({
-      prepastFinish: finishFinal, flowrate, tempAfterHeater, tempOutput,
+    const kelengkapan = statusKelengkapanPrepast({
+      prepastStart, prepastFinish: finishFinal, flowrate, tempAfterHeater, tempOutput,
     });
 
     await conn.query(
       `UPDATE prepast_record
           SET prepast_start = ?, prepast_finish = ?, flowrate_pst = ?,
               temp_after_heater = ?, temp_output_prd = ?, is_gantung = ?,
-              continuity_previous_id = ?, continuity_override = ?,
-              continuity_override_reason = ?
+              continuity_previous_id = ?, continuity_override = FALSE,
+              continuity_override_reason = NULL
         WHERE id = ?`,
       [
-        prepastStart, finishFinal, flowrate ?? null, tempAfterHeater ?? null,
-        tempOutput ?? null, gantungBaru,
-        kontinu && tersambung ? sebelumnya?.id ?? null : null,
-        false, null, id,
+        prepastStart, finishFinal, flowrate, tempAfterHeater, tempOutput,
+        kelengkapan.isGantung,
+        continuityPreviousIdBaru,
+        id,
       ],
     );
 
-    // BR-09 — anchor baru hanya di-set bila recordnya sudah benar-benar lengkap.
-    if (!gantungBaru) {
+    if (finishFinal) {
       await conn.query(
         'UPDATE silo SET standing_time_anchor = ? WHERE id = ? AND standing_time_anchor IS NULL',
         [finishFinal, lama.silo_tujuan_id],
@@ -428,14 +491,12 @@ export async function lengkapiDraft(id, {
     }
 
     const [baru] = await conn.query('SELECT * FROM prepast_record WHERE id = ?', [id]);
-
     await catatAudit(conn, {
       entity: 'prepast', entityId: id, action: 'COMPLETE_DRAFT',
-      actorId: aktor.id, before: lama, after: baru[0],
-      ip,
+      actorId: aktor.id, before: lama, after: baru[0], ip,
     });
 
-    return baru[0];
+    return bentukKonteksKelengkapan(baru[0]);
   });
 }
 

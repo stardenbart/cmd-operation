@@ -445,6 +445,12 @@ export async function koreksi(modul, id, ubah, alasan, aktor, ip) {
 
   return withTransaction(async (conn) => {
     const lama = await ambil(conn, modul, id);
+    if (modul === 'prepast' && lama.is_gantung) {
+      throw new BusinessError(
+        'PREPAST_USE_COMPLETE',
+        'Record Prepast yang masih gantung harus diisi lewat tindakan Lengkapi.',
+      );
+    }
     const volumeBerubah = volumeKoreksiBerubah(modul, ubah, lama);
     const cara = await periksaKelayakan(conn, modul, id, lama, aktor, { volumeBerubah });
 

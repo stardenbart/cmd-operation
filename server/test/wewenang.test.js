@@ -313,12 +313,11 @@ describe('BR-23 - penagihan input yang menggantung', () => {
 
     assert.equal((await dataList.gantung(AKTOR.operator)).ringkasan.jumlah, 1);
 
-    // Dilengkapi lewat jalur koreksi, sama seperti tombol "Lengkapi" di layar.
-    await pool.query(
-      `UPDATE prepast_record
-          SET prepast_start = ?, prepast_finish = ?, is_gantung = FALSE
-        WHERE id = ?`,
-      [T(7), T(8), pst.dibuat[0].id],
+    await prepast.lengkapiDraft(
+      pst.dibuat[0].id,
+      { prepastFinish: T(8), flowrate: 5.2, tempAfterHeater: 86, tempOutput: 7 },
+      AKTOR.operator,
+      IP_UJI,
     );
 
     assert.equal((await dataList.gantung(AKTOR.operator)).ringkasan.jumlah, 0);
@@ -367,15 +366,14 @@ describe('BR-23 - penagihan input yang menggantung', () => {
 });
 
 describe('BR-23 — draft tidak dapat disetujui', () => {
-  test('prepast tanpa waktu menjadi draft dan approval-nya ditolak', async () => {
+  test('prepast dengan data proses parsial menjadi draft dan approval-nya ditolak', async () => {
     const rcv = await terima(1000);
 
     const hasil = await prepast.buat(
       {
         receivingId: rcv.id,
         pecahan: [{ siloId: SILO.satu, volumeLtr: 500 }],
-        // Tanpa prepastStart & prepastFinish: inputnya memang belum selesai
-        isDraft: true,
+        prepastStart: T(8),
       },
       AKTOR.operator,
       IP_UJI,
@@ -403,7 +401,7 @@ describe('BR-23 — draft tidak dapat disetujui', () => {
       {
         receivingId: rcv.id,
         pecahan: [{ siloId: SILO.satu, volumeLtr: 500 }],
-        isDraft: true,
+        prepastStart: T(8),
       },
       AKTOR.operator,
       IP_UJI,
@@ -413,7 +411,6 @@ describe('BR-23 — draft tidak dapat disetujui', () => {
     await prepast.lengkapiDraft(
       idPrepast,
       {
-        prepastStart: T(8),
         prepastFinish: T(9),
         flowrate: 10000,
         tempAfterHeater: 85,
