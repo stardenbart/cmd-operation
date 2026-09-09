@@ -21,6 +21,16 @@ const idTujuanOpsional = z.preprocess(
   z.coerce.number().int().positive().optional(),
 );
 
+const nomorBatchOpsional = z.preprocess(
+  (v) => (v === '' || v === null ? undefined : v),
+  z.union([z.string(), z.number()]).optional(),
+);
+
+const skemaBatchBersama = z.object({
+  batchPrefix: teksOpsional(10),
+  batchNomor: nomorBatchOpsional,
+});
+
 const skemaBuat = z
   .object({
     siloAsalId: z.coerce.number().int().positive(),
@@ -30,7 +40,7 @@ const skemaBuat = z
     tankId: idTujuanOpsional,
     siloTujuanId: idTujuanOpsional,
     batchPrefix: teksOpsional(10),
-    batchNomor: z.preprocess((v) => (v === '' ? undefined : v), z.union([z.string(), z.number()]).optional()),
+    batchNomor: nomorBatchOpsional,
     isDraft: z.coerce.boolean().default(false),
   })
   // Tujuan dan batch bergantung pada jenis transfernya. Diperiksa di lapis
@@ -67,7 +77,7 @@ const skemaBaris = z
     tankId: idTujuanOpsional,
     siloTujuanId: idTujuanOpsional,
     batchPrefix: teksOpsional(10),
-    batchNomor: z.preprocess((v) => (v === '' ? undefined : v), z.union([z.string(), z.number()]).optional()),
+    batchNomor: nomorBatchOpsional,
   })
   .superRefine((v, ctx) => {
     if (v.jenis === 'PEMAKAIAN PRODUKSI') {
@@ -81,6 +91,10 @@ const skemaBatch = z.object({
   // Waktu transfer WAJIB pada input multi-baris - transfer batch selalu punya
   // waktu, tidak menggantung.
   trfTime: waktu(),
+  // Default MANUAL menjaga kompatibilitas klien lama yang mengirim batch pada
+  // setiap baris. Mode SAMA memakai satu sumber batch di tingkat request.
+  modeBatch: z.enum(['SAMA', 'MANUAL']).default('MANUAL'),
+  batchBersama: skemaBatchBersama.optional(),
   baris: z.array(skemaBaris).min(1).max(20),
 });
 
