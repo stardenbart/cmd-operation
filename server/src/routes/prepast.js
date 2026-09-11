@@ -4,27 +4,34 @@ import * as prepast from '../services/prepast.js';
 import { wajibLogin, wajibWewenang } from '../middleware/auth.js';
 import { AKSI } from '../auth/permissions.js';
 import { asyncHandler } from '../middleware/errors.js';
-import { validasiBody, validasiQuery, angkaDesimal, angkaDesimalOpsional, teksOpsional, waktu } from '../middleware/validasi.js';
+import { validasiBody, validasiQuery, angkaDesimalOpsional, teksOpsional, waktu } from '../middleware/validasi.js';
 
 const router = Router();
 router.use(wajibLogin);
 
+const idSiloOpsional = z.preprocess(
+  (v) => (v === '' || v === null || v === undefined ? undefined : v),
+  z.coerce.number().int().positive().optional(),
+);
+
 /** Satu baris silo tujuan beserta volumenya (FR-29.1). */
 const skemaPecahan = z.object({
-  siloId: z.coerce.number().int().positive(),
-  volumeLtr: angkaDesimal({ min: 0, maxDecimals: 2 }),
+  siloId: idSiloOpsional,
+  volumeLtr: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
 });
 
 const skemaBuat = z.object({
   receivingId: z.coerce.number().int().positive(),
   // Beberapa silo dalam satu kali kirim — inti FR-29
-  pecahan: z.array(skemaPecahan).min(1, 'isi minimal satu silo tujuan').max(9),
+  pecahan: z.array(skemaPecahan).min(1, 'isi minimal satu baris Prepast').max(9),
   // Variabel proses diisi SATU KALI, berlaku untuk seluruh baris (FR-29.2)
   prepastStart: waktu(),
   prepastFinish: waktu().optional(),
-  flowrate: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
-  tempAfterHeater: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
-  tempOutput: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
+  // Batas max mengikuti kolom database: flowrate_pst DECIMAL(8,2),
+  // temp_after_heater & temp_output_prd DECIMAL(6,2).
+  flowrate: angkaDesimalOpsional({ min: 0, max: 999999.99, maxDecimals: 2, inclusive: true }),
+  tempAfterHeater: angkaDesimalOpsional({ min: 0, max: 9999.99, maxDecimals: 2, inclusive: true }),
+  tempOutput: angkaDesimalOpsional({ min: 0, max: 9999.99, maxDecimals: 2, inclusive: true }),
   remarks: teksOpsional(),
   konfirmasiRollover: z.coerce.boolean().default(false),
   konfirmasiOprp: z.coerce.boolean().default(false),
@@ -33,18 +40,27 @@ const skemaBuat = z.object({
 });
 
 const skemaLengkapi = z.object({
+  siloId: idSiloOpsional,
+  volumeLtr: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
+  // Silo tambahan yang dibuat sebagai record BARU sekaligus dengan
+  // pelengkapan ini — pecahan batch yang sama ke beberapa silo tujuan,
+  // ditemukan operator belakangan, bukan saat pengisian awal.
+  pecahanTambahan: z.array(skemaPecahan).max(8).optional(),
   prepastStart: waktu().optional(),
   prepastFinish: waktu().optional(),
-  flowrate: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
-  tempAfterHeater: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
-  tempOutput: angkaDesimalOpsional({ min: 0, maxDecimals: 2, inclusive: true }),
+  // Batas max mengikuti kolom database: flowrate_pst DECIMAL(8,2),
+  // temp_after_heater & temp_output_prd DECIMAL(6,2).
+  flowrate: angkaDesimalOpsional({ min: 0, max: 999999.99, maxDecimals: 2, inclusive: true }),
+  tempAfterHeater: angkaDesimalOpsional({ min: 0, max: 9999.99, maxDecimals: 2, inclusive: true }),
+  tempOutput: angkaDesimalOpsional({ min: 0, max: 9999.99, maxDecimals: 2, inclusive: true }),
   konfirmasiRollover: z.coerce.boolean().default(false),
   konfirmasiOprp: z.coerce.boolean().default(false),
   kontinu: z.coerce.boolean().optional(),
   continuityPreviousId: z.coerce.number().int().positive().optional(),
 }).refine(
-  (nilai) => ['prepastStart', 'prepastFinish', 'flowrate', 'tempAfterHeater', 'tempOutput']
-    .some((key) => nilai[key] !== undefined),
+  (nilai) => ['siloId', 'volumeLtr', 'prepastStart', 'prepastFinish', 'flowrate', 'tempAfterHeater', 'tempOutput']
+    .some((key) => nilai[key] !== undefined)
+    || (nilai.pecahanTambahan?.length ?? 0) > 0,
   { message: 'isi minimal satu field Prepast yang akan dilengkapi' },
 );
 

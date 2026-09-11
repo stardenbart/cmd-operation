@@ -26,6 +26,11 @@ const nomorBatchOpsional = z.preprocess(
   z.union([z.string(), z.number()]).optional(),
 );
 
+const waktuOpsional = z.preprocess(
+  (v) => (v === '' || v === null ? undefined : v),
+  waktu().optional(),
+);
+
 const skemaBatchBersama = z.object({
   batchPrefix: teksOpsional(10),
   batchNomor: nomorBatchOpsional,
@@ -36,7 +41,7 @@ const skemaBuat = z
     siloAsalId: z.coerce.number().int().positive(),
     jenis: z.enum(['PEMAKAIAN PRODUKSI', 'PINDAH SILO']),
     volumeLtr: angkaDesimal({ min: 0, maxDecimals: 2 }),
-    trfTime: waktu().optional(),
+    trfTime: waktuOpsional,
     tankId: idTujuanOpsional,
     siloTujuanId: idTujuanOpsional,
     batchPrefix: teksOpsional(10),
@@ -65,12 +70,14 @@ const skemaBuat = z
   });
 
 /*
- * Beberapa baris transfer sekaligus (multi-MT dari multi-silo, satu waktu).
- * Tiap baris divalidasi dengan aturan yang sama seperti transfer tunggal;
- * trfTime dan isDraft berlaku untuk seluruh baris.
+ * Beberapa baris transfer sekaligus (multi-MT dari multi-silo).
+ * Tiap baris divalidasi dengan aturan yang sama seperti transfer tunggal.
+ * Mode SAMA memakai satu waktu di tingkat request, sedangkan mode MANUAL
+ * memakai waktu masing-masing baris.
  */
 const skemaBaris = z
   .object({
+    trfTime: waktuOpsional,
     siloAsalId: z.coerce.number().int().positive(),
     jenis: z.enum(['PEMAKAIAN PRODUKSI', 'PINDAH SILO']),
     volumeLtr: angkaDesimal({ min: 0, maxDecimals: 2 }),
@@ -87,16 +94,39 @@ const skemaBaris = z
     }
   });
 
-const skemaBatch = z.object({
-  // Waktu transfer WAJIB pada input multi-baris - transfer batch selalu punya
-  // waktu, tidak menggantung.
-  trfTime: waktu(),
-  // Default MANUAL menjaga kompatibilitas klien lama yang mengirim batch pada
-  // setiap baris. Mode SAMA memakai satu sumber batch di tingkat request.
-  modeBatch: z.enum(['SAMA', 'MANUAL']).default('MANUAL'),
-  batchBersama: skemaBatchBersama.optional(),
-  baris: z.array(skemaBaris).min(1).max(20),
-});
+const skemaBatch = z
+  .object({
+    trfTime: waktuOpsional,
+    // modeBatch sengaja belum diberi default agar superRefine dapat membedakan
+    // payload lama (tanpa mode) dari payload MANUAL baru.
+    modeBatch: z.enum(['SAMA', 'MANUAL']).optional(),
+    batchBersama: skemaBatchBersama.optional(),
+    baris: z.array(skemaBaris).min(1).max(20),
+  })
+  .superRefine((v, ctx) => {
+    // Payload lama tidak mempunyai modeBatch dan memakai satu waktu bersama.
+    if ((v.modeBatch === undefined || v.modeBatch === 'SAMA') && !v.trfTime) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['trfTime'],
+        message: 'wajib untuk Batch sama',
+      });
+    }
+
+    if (v.modeBatch === 'MANUAL') {
+      v.baris.forEach((baris, index) => {
+        if (!baris.trfTime) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['baris', index, 'trfTime'],
+            message: 'wajib untuk Isi manual setiap transfer',
+          });
+        }
+      });
+    }
+  })
+  // Default MANUAL menjaga kompatibilitas batch per baris milik klien lama.
+  .transform((v) => ({ ...v, modeBatch: v.modeBatch ?? 'MANUAL' }));
 
 const skemaPratinjau = z.object({
   siloId: z.coerce.number().int().positive(),

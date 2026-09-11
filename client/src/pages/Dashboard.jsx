@@ -242,6 +242,7 @@ export default function Dashboard() {
         ringkasan={ringkasan}
         buffer={buffer}
         onBuffer={(b) => ke(`/silo/${b.silo_id}`)}
+        onKgBelumTerkonversi={() => ke('/data?modul=receiving&bjKosong=true')}
       />
 
       <SiloPenyimpanan penyimpanan={penyimpanan} onPilih={(s) => ke(`/silo/${s.silo_id}`)} />

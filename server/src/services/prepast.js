@@ -128,11 +128,6 @@ export async function buat(masukan, aktor, ip) {
     prepastStart, prepastFinish ?? null, konfirmasiRollover,
   );
   validasiOprp(tempAfterHeater, konfirmasiOprp);
-  const kelengkapan = statusKelengkapanPrepast({
-    prepastStart, prepastFinish: finishFinal, flowrate, tempAfterHeater, tempOutput,
-  });
-  const gantung = kelengkapan.isGantung;
-
   return withTransaction(async (conn) => {
     // Kunci batch induk: dua operator tidak boleh memprepast sisa yang sama
     const [barisInduk] = await conn.query(
@@ -153,7 +148,9 @@ export async function buat(masukan, aktor, ip) {
 
     // Kunci silo tujuan dalam urutan tetap. Tanpa ini, dua receiving berbeda
     // dapat membaca kapasitas lama silo yang sama dan keduanya lolos validasi.
-    const siloIds = [...new Set(pecahan.map((p) => Number(p.siloId)))].sort((a, b) => a - b);
+    const siloIds = [...new Set(pecahan
+      .filter((p) => p.siloId != null)
+      .map((p) => Number(p.siloId)))].sort((a, b) => a - b);
     const tempat = siloIds.map(() => '?').join(', ');
     if (siloIds.length) {
       await conn.query(`SELECT id FROM silo WHERE id IN (${tempat}) ORDER BY id FOR UPDATE`, siloIds);
@@ -177,11 +174,20 @@ export async function buat(masukan, aktor, ip) {
     );
     const infoSilo = new Map(siloBaris.map((s) => [s.silo_id, s]));
 
+    // `qty_remaining_ltr` bernilai NULL selama Receiving induk belum punya
+    // Berat Jenis — volume liternya memang belum bisa dihitung sama sekali,
+    // beda dari batch yang sungguh sudah habis. `Number(null)` akan diam-diam
+    // menjadi 0 dan disalahartikan sebagai "habis", jadi NULL harus tetap
+    // NULL sampai ke validasiPecahan.
+    const sisaIndukLtr = induk.qty_remaining_ltr === null
+      ? null
+      : Number(induk.qty_remaining_ltr);
+
     let hasilValidasi;
     try {
       hasilValidasi = validasiPecahan(
         pecahan,
-        Number(induk.qty_remaining_ltr),
+        sisaIndukLtr,
         kapasitas,
         batasKeras,
       );
@@ -190,7 +196,7 @@ export async function buat(masukan, aktor, ip) {
       // semuanya menjadi BR-06.
       throw new BusinessError(err.kode ?? 'VALIDATION_ERROR', err.message, {
         ...(err.detail ?? {}),
-        sisaBatchLtr: Number(induk.qty_remaining_ltr),
+        sisaBatchLtr: sisaIndukLtr,
       });
     }
 
@@ -236,6 +242,16 @@ export async function buat(masukan, aktor, ip) {
     }
 
     for (const p of hasilValidasi.pecahan) {
+      const kelengkapanBaris = statusKelengkapanPrepast({
+        siloId: p.siloId,
+        volumeLtr: p.volumeLtr,
+        prepastStart,
+        prepastFinish: finishFinal,
+        flowrate,
+        tempAfterHeater,
+        tempOutput,
+      });
+      const gantungBaris = kelengkapanBaris.isGantung;
       const kode = await terbitkanId(conn, 'PST');
       const [hasil] = await conn.query(
         `INSERT INTO prepast_record
@@ -258,13 +274,14 @@ export async function buat(masukan, aktor, ip) {
           null,
           flowrate ?? null, tempAfterHeater ?? null, tempOutput ?? null,
           induk.nilai_ts,
-          aktor.id, gantung, remarks ?? null,
+          aktor.id, gantungBaris, remarks ?? null,
         ],
       );
 
       // Anchor bergantung pada waktu susu selesai masuk silo, bukan pada
       // lengkapnya flowrate/suhu. Data ukur lain boleh tetap menggantung.
-      if (finishFinal && !infoSilo.get(p.siloId).standing_time_anchor) {
+      if (p.siloId != null && p.volumeLtr != null
+        && finishFinal && !infoSilo.get(p.siloId).standing_time_anchor) {
         await conn.query(
           'UPDATE silo SET standing_time_anchor = ? WHERE id = ? AND standing_time_anchor IS NULL',
           [finishFinal, p.siloId],
@@ -273,33 +290,48 @@ export async function buat(masukan, aktor, ip) {
 
       dibuat.push({
         id: hasil.insertId, kode, siloId: p.siloId, volumeLtr: p.volumeLtr,
+        gantung: gantungBaris,
+        fieldKosong: kelengkapanBaris.fieldKosong,
         kontinu: kontinuitas.tersambung,
         continuityPreviousId: kontinuitas.tersambung ? kontinuitas.sebelumnya?.id ?? null : null,
         continuityOverride: false,
       });
     }
 
-    // FR-5.6 — kurangi sisa batch induk; tutup bila habis (BR-08)
-    const sisaBaru = Number(induk.qty_remaining_ltr) - hasilValidasi.totalLtr;
-    await conn.query(
-      `UPDATE receiving
-          SET qty_remaining_ltr = ?,
-              buffer_status = ?,
-              status_fifo = ?
-        WHERE id = ?`,
-      [
-        sisaBaru,
-        sisaBaru <= 0 ? 'COMPLETED' : 'IN_PREPAST',
-        sisaBaru <= 0 ? 'CLOSED' : 'ACTIVE',
-        receivingId,
-      ],
-    );
+    // FR-5.6 — kurangi sisa batch induk; tutup bila habis (BR-08).
+    // Dilewati sepenuhnya bila sisanya belum diketahui: totalLtr pasti 0
+    // (validasiPecahan menolak volume apa pun saat itu), dan Receiving harus
+    // tetap gantung apa adanya sampai Berat Jenis-nya dilengkapi — bukan
+    // ditutup seolah-olah habis.
+    const sisaBaru = sisaIndukLtr === null
+      ? null
+      : sisaIndukLtr - hasilValidasi.totalLtr;
+    if (sisaBaru !== null) {
+      await conn.query(
+        `UPDATE receiving
+            SET qty_remaining_ltr = ?,
+                buffer_status = ?,
+                status_fifo = ?
+          WHERE id = ?`,
+        [
+          sisaBaru,
+          sisaBaru <= 0 ? 'COMPLETED' : 'IN_PREPAST',
+          sisaBaru <= 0 ? 'CLOSED' : 'ACTIVE',
+          receivingId,
+        ],
+      );
+    }
+
+    const gantung = dibuat.some((d) => d.gantung);
+    const fieldKosong = [...new Map(
+      dibuat.flatMap((d) => d.fieldKosong).map((f) => [f.key, f]),
+    ).values()];
 
     for (const d of dibuat) {
       await catatAudit(conn, {
         entity: 'prepast', entityId: d.id, action: 'CREATE',
         actorId: aktor.id,
-        after: { ...d, receivingId, gantung },
+        after: { ...d, receivingId },
         ip,
       });
     }
@@ -311,7 +343,7 @@ export async function buat(masukan, aktor, ip) {
       // `draft` dipertahankan sebagai nama lama; kini artinya "menggantung".
       draft: gantung,
       gantung,
-      fieldKosong: kelengkapan.fieldKosong,
+      fieldKosong,
       // BR-24 — baris yang melampaui kapasitas nominal namun masih sah
       melampauiNominal: hasilValidasi.melampauiNominal,
       rolloverDiterapkan: finishFinal?.getTime?.() !== prepastFinish?.getTime?.(),
@@ -355,6 +387,8 @@ function pastikanBolehLengkapi(lama, aktor) {
 
 function bentukKonteksKelengkapan(record) {
   const kelengkapan = statusKelengkapanPrepast({
+    siloId: record.silo_tujuan_id,
+    volumeLtr: record.vol_prepast_ltr,
     prepastStart: record.prepast_start,
     prepastFinish: record.prepast_finish,
     flowrate: record.flowrate_pst,
@@ -364,6 +398,8 @@ function bentukKonteksKelengkapan(record) {
   return {
     id: record.id,
     kode: record.kode,
+    siloId: record.silo_tujuan_id,
+    volumeLtr: record.vol_prepast_ltr,
     prepastStart: record.prepast_start,
     prepastFinish: record.prepast_finish,
     flowrate: record.flowrate_pst,
@@ -381,13 +417,32 @@ export async function konteksPelengkapan(id, aktor) {
   const [baris] = await pool.query('SELECT * FROM prepast_record WHERE id = ?', [id]);
   if (!baris[0]) throw new NotFoundError('Prepast');
   pastikanBolehLengkapi(baris[0], aktor);
-  return bentukKonteksKelengkapan(baris[0]);
+
+  // Volume belum dapat dilengkapi selama Receiving induk belum punya Berat
+  // Jenis (lihat lengkapiDraft). UI memakai ini untuk menonaktifkan field
+  // Volume di muka, bukan menunggu ditolak server.
+  const [indukBaris] = await pool.query(
+    'SELECT kode, berat_jenis, qty_remaining_ltr FROM receiving WHERE id = ?',
+    [baris[0].receiving_id],
+  );
+  const induk = indukBaris[0] ?? null;
+
+  return {
+    ...bentukKonteksKelengkapan(baris[0]),
+    siloTujuan: await siloTujuan(),
+    bjIndukBelumDiisi: induk != null && induk.berat_jenis == null,
+    indukKode: induk?.kode ?? null,
+    // Sisa yang masih bisa dialokasikan — dasar UI "Tambah silo" & ringkasan
+    // Teralokasi. NULL bila induk belum punya Berat Jenis (belum ada angka
+    // untuk dialokasikan sama sekali).
+    sisaIndukLtr: induk?.qty_remaining_ltr == null ? null : Number(induk.qty_remaining_ltr),
+  };
 }
 
 /**
  * Melengkapi record secara bertahap — BR-16.
  * Field yang tidak dikirim mempertahankan nilai lama; record baru keluar dari
- * Dashboard setelah keempat data proses terisi.
+ * Dashboard setelah silo tujuan, volume, dan seluruh data proses terisi.
  */
 export async function lengkapiDraft(id, perubahan, aktor, ip) {
   return withTransaction(async (conn) => {
@@ -404,6 +459,27 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
     const flowrate = perubahan.flowrate ?? lama.flowrate_pst;
     const tempAfterHeater = perubahan.tempAfterHeater ?? lama.temp_after_heater;
     const tempOutput = perubahan.tempOutput ?? lama.temp_output_prd;
+    const siloId = perubahan.siloId ?? lama.silo_tujuan_id;
+    const volumeLtr = perubahan.volumeLtr
+      ?? (lama.vol_prepast_ltr == null ? null : Number(lama.vol_prepast_ltr));
+
+    if (lama.silo_tujuan_id != null
+      && perubahan.siloId !== undefined
+      && Number(perubahan.siloId) !== Number(lama.silo_tujuan_id)) {
+      throw new BusinessError(
+        'SILO_ALREADY_SET',
+        'Silo tujuan yang sudah tersimpan tidak dapat diganti lewat pelengkapan. Gunakan koreksi.',
+      );
+    }
+
+    if (lama.vol_prepast_ltr != null
+      && perubahan.volumeLtr !== undefined
+      && Number(perubahan.volumeLtr) !== Number(lama.vol_prepast_ltr)) {
+      throw new BusinessError(
+        'VOLUME_ALREADY_SET',
+        'Volume yang sudah tersimpan tidak dapat diganti lewat pelengkapan. Gunakan koreksi.',
+      );
+    }
 
     if (!prepastStart) {
       throw new BusinessError('PREPAST_START_REQUIRED', 'Waktu Mulai wajib diisi.');
@@ -413,6 +489,84 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       prepastStart, finishMasukan, perubahan.konfirmasiRollover ?? false,
     );
     validasiOprp(tempAfterHeater, perubahan.konfirmasiOprp ?? false);
+
+    const volumeDitambahkan = lama.vol_prepast_ltr == null && volumeLtr != null;
+    const siloDitambahkan = lama.silo_tujuan_id == null && siloId != null;
+    let induk = null;
+
+    // Volume yang baru diketahui baru sekarang mengambil stok dari buffer.
+    // Receiving dikunci agar dua draft tidak menghabiskan sisa yang sama.
+    if (volumeDitambahkan) {
+      const [barisInduk] = await conn.query(
+        'SELECT id, kode, qty_remaining_ltr FROM receiving WHERE id = ? FOR UPDATE',
+        [lama.receiving_id],
+      );
+      induk = barisInduk[0];
+      if (!induk) throw new NotFoundError('Batch penerimaan');
+
+      // Sisa batch induk belum dapat dihitung selama Berat Jenis Receiving-nya
+      // belum diisi — tidak ada angka untuk memvalidasi maupun mengurangi
+      // Volume Prepast ini terhadapnya. Pesan ini jauh lebih jelas daripada
+      // membiarkan Number(null) jatuh menjadi 0 dan disalahartikan sebagai
+      // "batch sudah habis" (BR-06).
+      if (induk.qty_remaining_ltr === null) {
+        throw new BusinessError(
+          'RECEIVING_BJ_BELUM_DIISI',
+          `Berat Jenis Receiving ${induk.kode} belum diisi. Lengkapi Berat Jenis ` +
+            'Receiving tersebut terlebih dahulu sebelum mengisi Volume Prepast ini.',
+        );
+      }
+    }
+
+    // Silo perlu dikunci saat baru dipilih atau ketika volume baru ditambahkan
+    // ke silo yang telah dipilih sebelumnya. Kapasitas divalidasi hanya ketika
+    // volume sudah tersedia.
+    let kapasitas = new Map();
+    let batasKeras = new Map();
+    if (siloId != null && (siloDitambahkan || volumeDitambahkan)) {
+      const [siloBaris] = await conn.query(
+        'SELECT id FROM silo WHERE id = ? AND is_buffer = FALSE AND is_active = TRUE FOR UPDATE',
+        [siloId],
+      );
+      if (!siloBaris[0]) {
+        throw new BusinessError('SILO_NOT_FOUND', 'Silo tujuan tidak ditemukan atau tidak aktif.');
+      }
+      const [kapasitasBaris] = await conn.query(
+        `SELECT silo_id, vol_tersedia_ltr, vol_tersedia_toleransi_ltr
+           FROM v_silo_volume WHERE silo_id = ?`,
+        [siloId],
+      );
+      kapasitas = new Map(kapasitasBaris.map((s) => [s.silo_id, Number(s.vol_tersedia_ltr)]));
+      batasKeras = new Map(kapasitasBaris.map((s) => [s.silo_id, Number(s.vol_tersedia_toleransi_ltr)]));
+    }
+
+    if (volumeLtr != null && (siloDitambahkan || volumeDitambahkan)) {
+      try {
+        validasiPecahan(
+          [{ siloId: siloId == null ? null : Number(siloId), volumeLtr: Number(volumeLtr) }],
+          volumeDitambahkan ? Number(induk.qty_remaining_ltr) : Number(volumeLtr),
+          kapasitas,
+          batasKeras,
+        );
+      } catch (err) {
+        throw new BusinessError(err.kode ?? 'VALIDATION_ERROR', err.message, err.detail ?? null);
+      }
+    }
+
+    if (volumeDitambahkan) {
+      const sisaBaru = Number(induk.qty_remaining_ltr) - Number(volumeLtr);
+      await conn.query(
+        `UPDATE receiving
+            SET qty_remaining_ltr = ?, buffer_status = ?, status_fifo = ?
+          WHERE id = ?`,
+        [
+          sisaBaru,
+          sisaBaru <= 0 ? 'COMPLETED' : 'IN_PREPAST',
+          sisaBaru <= 0 ? 'CLOSED' : 'ACTIVE',
+          induk.id,
+        ],
+      );
+    }
 
     /*
      * Melengkapi hasil ukur tidak boleh divalidasi ulang terhadap "record
@@ -465,17 +619,22 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
     }
 
     const kelengkapan = statusKelengkapanPrepast({
-      prepastStart, prepastFinish: finishFinal, flowrate, tempAfterHeater, tempOutput,
+      siloId, volumeLtr, prepastStart, prepastFinish: finishFinal,
+      flowrate, tempAfterHeater, tempOutput,
     });
 
     await conn.query(
       `UPDATE prepast_record
-          SET prepast_start = ?, prepast_finish = ?, flowrate_pst = ?,
+          SET silo_tujuan_id = ?, vol_prepast_ltr = ?, qty_remaining_ltr = ?,
+              prepast_start = ?, prepast_finish = ?, flowrate_pst = ?,
               temp_after_heater = ?, temp_output_prd = ?, is_gantung = ?,
               continuity_previous_id = ?, continuity_override = FALSE,
               continuity_override_reason = NULL
         WHERE id = ?`,
       [
+        siloId,
+        volumeLtr,
+        volumeDitambahkan ? volumeLtr : lama.qty_remaining_ltr,
         prepastStart, finishFinal, flowrate, tempAfterHeater, tempOutput,
         kelengkapan.isGantung,
         continuityPreviousIdBaru,
@@ -483,11 +642,175 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       ],
     );
 
-    if (finishFinal) {
+    if (finishFinal && siloId != null && volumeLtr != null) {
       await conn.query(
-        'UPDATE silo SET standing_time_anchor = ? WHERE id = ? AND standing_time_anchor IS NULL',
-        [finishFinal, lama.silo_tujuan_id],
+        `UPDATE silo
+            SET standing_time_anchor = CASE
+              WHEN standing_time_anchor IS NULL OR ? < standing_time_anchor THEN ?
+              ELSE standing_time_anchor
+            END
+          WHERE id = ?`,
+        [finishFinal, finishFinal, siloId],
       );
+    }
+
+    /*
+     * Silo tambahan — pecahan batch yang sama ke silo lain, ditemukan
+     * operator BELAKANGAN saat melengkapi, bukan saat pengisian awal
+     * (D-11: variabel prosesnya identik, hanya silo & volume yang beda).
+     * Tiap baris jadi record BARU, mewarisi seluruh data proses record
+     * yang sedang dilengkapi ini. Tetap dalam TRANSAKSI YANG SAMA —
+     * gagal satu baris berarti tidak ada yang tersimpan, termasuk
+     * pelengkapan record utama di atas (M-1).
+     */
+    const pecahanTambahan = Array.isArray(perubahan.pecahanTambahan)
+      ? perubahan.pecahanTambahan : [];
+    const dibuatTambahan = [];
+
+    if (pecahanTambahan.length > 0) {
+      if (!lama.receiving_id) {
+        throw new BusinessError(
+          'PECAHAN_TAMBAHAN_TANPA_INDUK',
+          'Record ini tidak berasal dari Receiving — tidak dapat menambah silo lain.',
+        );
+      }
+
+      // Silo yang sama dengan record utama akan lolos pengecekan duplikat
+      // FR-29.5 di validasiPecahan (yang hanya melihat DALAM daftar
+      // tambahan) karena silo utama tidak ikut daftar itu — dicek terpisah
+      // di sini supaya tidak ada dua baris memperebutkan kapasitas silo
+      // yang sama tanpa saling tahu.
+      if (siloId != null && pecahanTambahan.some((p) => Number(p.siloId) === Number(siloId))) {
+        throw new BusinessError(
+          'FR-29.5',
+          `Silo yang sama dengan record utama tidak boleh diisi lagi di baris tambahan (silo id ${siloId})`,
+        );
+      }
+
+      // Induk mungkin sudah terkunci di atas (volumeDitambahkan); kalau
+      // belum, kunci sekarang — baris tambahan tetap perlu memvalidasi &
+      // mengurangi sisa yang sama.
+      let indukTambahan = induk;
+      if (!indukTambahan) {
+        const [barisInduk] = await conn.query(
+          'SELECT id, kode, qty_remaining_ltr FROM receiving WHERE id = ? FOR UPDATE',
+          [lama.receiving_id],
+        );
+        indukTambahan = barisInduk[0];
+        if (!indukTambahan) throw new NotFoundError('Batch penerimaan');
+        if (indukTambahan.qty_remaining_ltr === null) {
+          throw new BusinessError(
+            'RECEIVING_BJ_BELUM_DIISI',
+            `Berat Jenis Receiving ${indukTambahan.kode} belum diisi. Lengkapi Berat Jenis ` +
+              'Receiving tersebut terlebih dahulu sebelum menambah silo.',
+          );
+        }
+      }
+
+      // Sisa yang tersedia UNTUK BARIS TAMBAHAN: bila volume record utama
+      // baru saja dikurangkan di atas, `induk.qty_remaining_ltr` di memori
+      // sudah usang — pakai sisaBaru yang baru dihitung. Kalau tidak, baca
+      // ulang dari DB (sudah dikunci FOR UPDATE, aman dari balapan).
+      let sisaTersedia;
+      if (volumeDitambahkan) {
+        sisaTersedia = Number(induk.qty_remaining_ltr) - Number(volumeLtr);
+      } else {
+        const [[r]] = await conn.query(
+          'SELECT qty_remaining_ltr FROM receiving WHERE id = ?', [indukTambahan.id],
+        );
+        sisaTersedia = Number(r.qty_remaining_ltr);
+      }
+
+      const [siloBarisTambahan] = await conn.query(
+        `SELECT silo_id, vol_tersedia_ltr, vol_tersedia_toleransi_ltr
+           FROM v_silo_volume WHERE is_buffer = FALSE`,
+      );
+      const kapasitasTambahan = new Map(
+        siloBarisTambahan.map((s) => [s.silo_id, Number(s.vol_tersedia_ltr)]),
+      );
+      const batasKerasTambahan = new Map(
+        siloBarisTambahan.map((s) => [s.silo_id, Number(s.vol_tersedia_toleransi_ltr)]),
+      );
+
+      let hasilValidasiTambahan;
+      try {
+        hasilValidasiTambahan = validasiPecahan(
+          pecahanTambahan, sisaTersedia, kapasitasTambahan, batasKerasTambahan,
+        );
+      } catch (err) {
+        throw new BusinessError(err.kode ?? 'VALIDATION_ERROR', err.message, err.detail ?? null);
+      }
+
+      for (const p of hasilValidasiTambahan.pecahan) {
+        const kelengkapanBaris = statusKelengkapanPrepast({
+          siloId: p.siloId, volumeLtr: p.volumeLtr, prepastStart, prepastFinish: finishFinal,
+          flowrate, tempAfterHeater, tempOutput,
+        });
+        const kodeBaru = await terbitkanId(conn, 'PST');
+        const [hasilInsert] = await conn.query(
+          `INSERT INTO prepast_record
+             (kode, receiving_id, supplier_id, silo_tujuan_id,
+              vol_prepast_ltr, qty_remaining_ltr,
+              prepast_start, prepast_finish, continuity_previous_id,
+              continuity_override, continuity_override_reason, flowrate_pst,
+              temp_after_heater, temp_output_prd, nilai_ts,
+              operator_id, status_approval, status_fifo, cmd_source,
+              is_gantung, remarks)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   'Pending Approval', 'ACTIVE', 'CMD1', ?, ?)`,
+          [
+            kodeBaru, lama.receiving_id, lama.supplier_id, p.siloId,
+            p.volumeLtr, p.volumeLtr,
+            prepastStart, finishFinal,
+            continuityPreviousIdBaru,
+            false, null,
+            flowrate ?? null, tempAfterHeater ?? null, tempOutput ?? null,
+            lama.nilai_ts,
+            aktor.id, kelengkapanBaris.isGantung, lama.remarks,
+          ],
+        );
+
+        if (p.siloId != null && p.volumeLtr != null && finishFinal) {
+          await conn.query(
+            `UPDATE silo SET standing_time_anchor = CASE
+                WHEN standing_time_anchor IS NULL OR ? < standing_time_anchor THEN ?
+                ELSE standing_time_anchor
+              END
+              WHERE id = ?`,
+            [finishFinal, finishFinal, p.siloId],
+          );
+        }
+
+        const recordBaru = {
+          id: hasilInsert.insertId, kode: kodeBaru, siloId: p.siloId, volumeLtr: p.volumeLtr,
+          isGantung: kelengkapanBaris.isGantung, fieldKosong: kelengkapanBaris.fieldKosong,
+        };
+        dibuatTambahan.push(recordBaru);
+
+        await catatAudit(conn, {
+          entity: 'prepast', entityId: hasilInsert.insertId, action: 'CREATE',
+          actorId: aktor.id,
+          after: { ...recordBaru, receivingId: lama.receiving_id, dariPelengkapan: id },
+          ip,
+        });
+      }
+
+      // Sisa induk dikurangi TOTAL baris tambahan — di luar potongan volume
+      // record utama, yang (bila ada) sudah ditulis ke DB di atas.
+      if (hasilValidasiTambahan.totalLtr > 0) {
+        const sisaAkhir = sisaTersedia - hasilValidasiTambahan.totalLtr;
+        await conn.query(
+          `UPDATE receiving
+              SET qty_remaining_ltr = ?, buffer_status = ?, status_fifo = ?
+            WHERE id = ?`,
+          [
+            sisaAkhir,
+            sisaAkhir <= 0 ? 'COMPLETED' : 'IN_PREPAST',
+            sisaAkhir <= 0 ? 'CLOSED' : 'ACTIVE',
+            indukTambahan.id,
+          ],
+        );
+      }
     }
 
     const [baru] = await conn.query('SELECT * FROM prepast_record WHERE id = ?', [id]);
@@ -496,7 +819,7 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       actorId: aktor.id, before: lama, after: baru[0], ip,
     });
 
-    return bentukKonteksKelengkapan(baru[0]);
+    return { ...bentukKonteksKelengkapan(baru[0]), pecahanTambahan: dibuatTambahan };
   });
 }
 
@@ -518,11 +841,12 @@ export async function daftar({ halaman = 1, perHalaman = 25, status, siloId, dra
             p.prepast_start, p.prepast_finish, p.flowrate_pst,
             p.temp_after_heater, p.temp_output_prd,
             p.status_approval, p.status_fifo, p.is_gantung,
-            r.kode AS receiving_kode, sup.supplier_name, s.silo_name
+            r.kode AS receiving_kode, sup.supplier_name,
+            COALESCE(s.silo_name, 'Belum ditentukan') AS silo_name
        FROM prepast_record p
        LEFT JOIN receiving r ON r.id = p.receiving_id
        LEFT JOIN supplier sup ON sup.id = p.supplier_id
-       JOIN silo s       ON s.id = p.silo_tujuan_id
+       LEFT JOIN silo s  ON s.id = p.silo_tujuan_id
        ${where}
       ORDER BY p.prepast_finish DESC, p.id DESC
       LIMIT ? OFFSET ?`,

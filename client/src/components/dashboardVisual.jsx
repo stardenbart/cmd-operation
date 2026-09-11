@@ -28,7 +28,14 @@ export function Bejana({ isi, nominal, toleransi }) {
 
   return (
     <div className="bejana">
-      <div className="bejana__toleransi" style={{ height: `${pctToleransi}%` }} />
+      {/* Elemen ini punya border-bottom sendiri (app.css) — pada height:0%
+          border itu tetap tergambar sebagai garis tipis di puncak bejana.
+          Toleransi yang dimatikan (switch off, migrasi 026 -> toleransi_ltr
+          efektif 0) harus benar-benar TIDAK ADA di layar, bukan cuma setinggi
+          0%, jadi elemen ini dilewati sama sekali saat toleransi <= 0. */}
+      {toleransi > 0 && (
+        <div className="bejana__toleransi" style={{ height: `${pctToleransi}%` }} />
+      )}
       <div
         className={`bejana__isi${lampauiNominal ? ' bejana__isi--lampaui' : ''}${isi <= 0 ? ' bejana__isi--kosong' : ''}`}
         style={{ height: `${pctTinggi}%` }}
@@ -156,11 +163,24 @@ export function rataTsTertimbang(baris) {
 }
 
 /** Kartu ringkasan stok: total tersimpan + isi buffer. */
-export function RingkasanStok({ ringkasan, buffer, onBuffer }) {
+export function RingkasanStok({ ringkasan, buffer, onBuffer, onKgBelumTerkonversi }) {
   const isiBuffer = buffer && (
     <>
       <div className="angka-besar">{fmt(buffer.vol_aktual_ltr)} L</div>
       <div className="label">Di buffer · {buffer.jumlah_batch_aktif} batch</div>
+    </>
+  );
+  // Kg yang belum dapat dikonversi ke liter karena Berat Jenis Receiving-nya
+  // masih kosong (lihat receivingGantung.js). Hanya tampil selagi ada backlog
+  // — begitu Berat Jenis diisi, angka ini otomatis berkurang lewat polling
+  // yang sudah berjalan, bukan lewat logic tambahan di sini.
+  const adaKgBelumTerkonversi = Number(ringkasan.kgBelumTerkonversi) > 0;
+  const isiKgBelumTerkonversi = (
+    <>
+      <div className="angka-besar">{fmt(ringkasan.kgBelumTerkonversi)} Kg</div>
+      <div className="label">
+        Menunggu Berat Jenis · {ringkasan.jumlahReceivingBelumTerkonversi} Receiving
+      </div>
     </>
   );
   return (
@@ -172,6 +192,11 @@ export function RingkasanStok({ ringkasan, buffer, onBuffer }) {
         )}
         {ringkasan.melampauiNominal > 0 && (
           <Lencana nada="waspada">{ringkasan.melampauiNominal} Melampaui nominal</Lencana>
+        )}
+        {adaKgBelumTerkonversi && (
+          <Lencana nada="waspada">
+            {ringkasan.jumlahReceivingBelumTerkonversi} Receiving belum dikonversi
+          </Lencana>
         )}
       </div>
       <div className="baris" style={{ gap: 32 }}>
@@ -190,6 +215,18 @@ export function RingkasanStok({ ringkasan, buffer, onBuffer }) {
           </button>
         ) : (
           <div>{isiBuffer}</div>
+        ))}
+        {adaKgBelumTerkonversi && (onKgBelumTerkonversi ? (
+          <button
+            type="button"
+            className="btn btn--hantu"
+            style={{ display: 'block', textAlign: 'left', height: 'auto', padding: 0 }}
+            onClick={onKgBelumTerkonversi}
+          >
+            {isiKgBelumTerkonversi}
+          </button>
+        ) : (
+          <div>{isiKgBelumTerkonversi}</div>
         ))}
       </div>
     </div>

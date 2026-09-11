@@ -48,12 +48,17 @@ function pastikanPeriode(periode) {
  */
 async function siloWajib(conn) {
   const [baris] = await conn.query(
-    `SELECT id, kode, silo_name, kapasitas_maks_ltr, toleransi_ltr
+    `SELECT id, kode, silo_name, kapasitas_maks_ltr, toleransi_ltr, toleransi_aktif
        FROM silo
       WHERE is_active = TRUE AND is_buffer = FALSE
       ORDER BY urutan`,
   );
   return baris;
+}
+
+/** Toleransi 0 saat switch-nya dimatikan — lihat migrasi 026. */
+function toleransiEfektif(silo) {
+  return silo.toleransi_aktif ? Number(silo.toleransi_ltr) : 0;
 }
 
 /** Isi periode: seluruh silo wajib, beserta nilai yang sudah tersimpan. */
@@ -78,7 +83,7 @@ export async function daftar(periode) {
       kode: s.kode,
       siloName: s.silo_name,
       kapasitasMaksLtr: Number(s.kapasitas_maks_ltr),
-      batasKerasLtr: Number(s.kapasitas_maks_ltr) + Number(s.toleransi_ltr),
+      batasKerasLtr: Number(s.kapasitas_maks_ltr) + toleransiEfektif(s),
       jumlahAwalLtr: ada ? Number(ada.jumlah_awal_ltr) : null,
       terisi: Boolean(ada),
       diperbaruiOleh: ada?.operator_nama ?? null,
@@ -142,7 +147,7 @@ export async function simpanBaris({ periode, siloId, jumlahAwalLtr }, aktor, ip)
     await pastikanBelumFinal(conn, periode);
 
     const [siloBaris] = await conn.query(
-      `SELECT id, kode, silo_name, kapasitas_maks_ltr, toleransi_ltr
+      `SELECT id, kode, silo_name, kapasitas_maks_ltr, toleransi_ltr, toleransi_aktif
          FROM silo WHERE id = ? AND is_active = TRUE AND is_buffer = FALSE`,
       [siloId],
     );
@@ -152,7 +157,7 @@ export async function simpanBaris({ periode, siloId, jumlahAwalLtr }, aktor, ip)
     // Volume yang secara fisik tidak mungkin ditolak, bukan sekadar
     // diperingatkan: hasil hitung di atas batas keras silo pasti salah ketik,
     // dan angka itu kelak menjadi dasar saldo berjalan.
-    const batasKeras = Number(silo.kapasitas_maks_ltr) + Number(silo.toleransi_ltr);
+    const batasKeras = Number(silo.kapasitas_maks_ltr) + toleransiEfektif(silo);
     if (nilai > batasKeras) {
       throw new BusinessError(
         'BR-24',

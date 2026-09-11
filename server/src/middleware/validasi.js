@@ -48,7 +48,9 @@ export function validasiQuery(skema) {
  * sendiri. Di Power Apps, `Substitute(text, ",", ".")` tersebar di belasan
  * formula dan sebagian terlewat.
  */
-export const angkaDesimal = ({ min = 0, maxDecimals, inclusive = false } = {}) =>
+export const angkaDesimal = ({
+  min = 0, max, maxDecimals, inclusive = false,
+} = {}) =>
   z.union([z.string(), z.number()]).transform((v, ctx) => {
     try {
       const n = parseAngka(v);
@@ -57,6 +59,14 @@ export const angkaDesimal = ({ min = 0, maxDecimals, inclusive = false } = {}) =
           code: 'custom',
           message: inclusive ? `minimal ${min}` : `harus lebih besar dari ${min}`,
         });
+        return z.NEVER;
+      }
+      // Batas kolom DECIMAL di database (mis. DECIMAL(6,2) = maks 9999.99).
+      // Tanpa ini, salah ketik satu digit tambahan lolos ke server dan
+      // ditolak MySQL sebagai "Out of range value" - galat mentah 500,
+      // bukan pesan yang jelas ke operator.
+      if (max !== undefined && n > max) {
+        ctx.addIssue({ code: 'custom', message: `maksimal ${max}` });
         return z.NEVER;
       }
       if (maxDecimals !== undefined) {

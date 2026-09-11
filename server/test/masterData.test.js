@@ -406,3 +406,67 @@ describe('FR-34 - hak akses custom', () => {
     );
   });
 });
+
+describe('BR-24 - switch toleransi silo (migrasi 026)', () => {
+  test('bawaan aktif dengan toleransi 1000 L, sama seperti sebelum switch ada', async () => {
+    const [[v]] = await pool.query(
+      'SELECT toleransi_ltr, kapasitas_dengan_toleransi_ltr FROM v_silo_volume WHERE silo_id = ?',
+      [SILO.satu],
+    );
+    assert.equal(Number(v.toleransi_ltr), 1000);
+  });
+
+  test('dimatikan -> toleransi efektif 0, nilai tersimpan tidak hilang', async () => {
+    await md.perbarui('silos', SILO.satu, { toleransi_aktif: false }, AKTOR.admin, IP_UJI);
+
+    const [[baris]] = await pool.query(
+      'SELECT toleransi_ltr, toleransi_aktif FROM silo WHERE id = ?',
+      [SILO.satu],
+    );
+    assert.equal(Number(baris.toleransi_ltr), 1000, 'nilai konfigurasi tetap tersimpan apa adanya');
+    assert.equal(Boolean(baris.toleransi_aktif), false);
+
+    const [[v]] = await pool.query(
+      `SELECT toleransi_ltr, kapasitas_maks_ltr, kapasitas_dengan_toleransi_ltr,
+              vol_tersedia_toleransi_ltr
+         FROM v_silo_volume WHERE silo_id = ?`,
+      [SILO.satu],
+    );
+    assert.equal(Number(v.toleransi_ltr), 0, 'VIEW memperlakukan toleransi sebagai 0');
+    assert.equal(
+      Number(v.kapasitas_dengan_toleransi_ltr), Number(v.kapasitas_maks_ltr),
+      'batas keras turun jadi persis kapasitas nominal',
+    );
+  });
+
+  test('dinyalakan kembali -> nilai 1000 L yang tersimpan langsung berlaku lagi', async () => {
+    await md.perbarui('silos', SILO.satu, { toleransi_aktif: false }, AKTOR.admin, IP_UJI);
+    await md.perbarui('silos', SILO.satu, { toleransi_aktif: true }, AKTOR.admin, IP_UJI);
+
+    const [[v]] = await pool.query(
+      'SELECT toleransi_ltr FROM v_silo_volume WHERE silo_id = ?',
+      [SILO.satu],
+    );
+    assert.equal(Number(v.toleransi_ltr), 1000, 'tidak perlu diketik ulang');
+  });
+
+  test('Stock Opname memakai toleransi efektif, bukan nilai tersimpan mentah', async () => {
+    const stockOpname = await import('../src/services/stockOpname.js');
+    await md.perbarui('silos', SILO.satu, { toleransi_aktif: false }, AKTOR.admin, IP_UJI);
+
+    const hasil = await stockOpname.daftar('2026-08');
+    const baris = hasil.baris.find((b) => b.siloId === SILO.satu);
+    const [[silo]] = await pool.query(
+      'SELECT kapasitas_maks_ltr FROM silo WHERE id = ?', [SILO.satu],
+    );
+    assert.equal(baris.batasKerasLtr, Number(silo.kapasitas_maks_ltr));
+  });
+
+  test('kolom toleransi_aktif divalidasi & disimpan sebagaimana boolean', async () => {
+    await md.perbarui('silos', SILO.satu, { toleransi_aktif: 'ya' }, AKTOR.admin, IP_UJI);
+    const [[baris]] = await pool.query(
+      'SELECT toleransi_aktif FROM silo WHERE id = ?', [SILO.satu],
+    );
+    assert.equal(Boolean(baris.toleransi_aktif), true, 'nilai truthy apa pun dipetakan ke TRUE');
+  });
+});

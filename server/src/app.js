@@ -28,6 +28,7 @@ import importDataRoutes from './routes/importData.js';
 import lossesRoutes from './routes/losses.js';
 import publicRoutes from './routes/public.js';
 import dashboardShareRoutes from './routes/dashboardShare.js';
+import pengaturanRoutes from './routes/pengaturan.js';
 
 export function buatApp(logger) {
   const app = express();
@@ -120,6 +121,7 @@ export function buatApp(logger) {
   // Tautan publik dashboard: endpoint tanpa login (gerbang token) + pengelolaannya.
   app.use('/api/v1/public', publicRoutes);
   app.use('/api/v1/dashboard-share', dashboardShareRoutes);
+  app.use('/api/v1/pengaturan', pengaturanRoutes);
 
   // --- Route modul lain dipasang di sini seiring fase berjalan ---
 

@@ -9,7 +9,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { pembatasLaju } from './rateLimit.js';
+import { pembatasLaju } from '../src/middleware/rateLimit.js';
 
 /** Menjalankan middleware secara sinkron dan mengembalikan status akhirnya. */
 function jalankan(mw, ip) {

@@ -13,16 +13,26 @@ router.use(wajibLogin);
 const skemaBuat = z.object({
   supplierId: z.coerce.number().int().positive(),
   qtyKg: angkaDesimal({ min: 0, maxDecimals: 2 }),
-  beratJenis: angkaDesimal({ min: 0, maxDecimals: 4 }),
+  // Batas max mengikuti kolom database: berat_jenis DECIMAL(8,4).
+  beratJenis: angkaDesimalOpsional({ min: 0, max: 9999.9999, maxDecimals: 4 }),
   nilaiTs: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
   finishTime: waktu(),
   remarks: teksOpsional(),
 });
 
+const skemaLengkapi = z.object({
+  // Batas max mengikuti kolom database: berat_jenis DECIMAL(8,4).
+  beratJenis: angkaDesimalOpsional({ min: 0, max: 9999.9999, maxDecimals: 4 }),
+  nilaiTs: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
+}).refine(
+  (nilai) => nilai.beratJenis !== undefined || nilai.nilaiTs !== undefined,
+  { message: 'isi minimal satu field Receiving yang akan dilengkapi' },
+);
+
 const skemaKoreksi = z.object({
   supplierId: z.coerce.number().int().positive().optional(),
   qtyKg: angkaDesimal({ min: 0, maxDecimals: 2 }).optional(),
-  beratJenis: angkaDesimal({ min: 0, maxDecimals: 4 }).optional(),
+  beratJenis: angkaDesimal({ min: 0, max: 9999.9999, maxDecimals: 4 }).optional(),
   nilaiTs: angkaDesimalOpsional({ min: 0, maxDecimals: 2 }),
   finishTime: waktu().optional(),
   remarks: teksOpsional(),
@@ -53,6 +63,26 @@ router.get(
   validasiQuery(skemaDaftar),
   asyncHandler(async (req, res) => {
     res.json(await receiving.daftar(req.query));
+  }),
+);
+
+router.get(
+  '/:id/complete-context',
+  wajibWewenang(AKSI.TRANSAKSI_SUNTING_PENDING),
+  asyncHandler(async (req, res) => {
+    res.json({ data: await receiving.konteksPelengkapan(Number(req.params.id), req.user) });
+  }),
+);
+
+router.post(
+  '/:id/complete',
+  wajibWewenang(AKSI.TRANSAKSI_SUNTING_PENDING),
+  validasiBody(skemaLengkapi),
+  asyncHandler(async (req, res) => {
+    const data = await receiving.lengkapiDraft(
+      Number(req.params.id), req.body, req.user, req.ip,
+    );
+    res.json({ data });
   }),
 );
 

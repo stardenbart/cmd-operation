@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { kontinu, kontinuDalamSilo, kelompokkan, menit } from './kontinuitasPrepast.js';
+import { kontinu, kontinuDalamSilo, kelompokkan, menit } from '../src/services/kontinuitasPrepast.js';
 
 const r = (id, start, finish, siloId = 1, volumeLtr = 100, supplierName = 'A') => ({
   id, kode: `PST-${id}`, start: new Date(start), finish: new Date(finish),

@@ -10,7 +10,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { hitungQtyLtr, parseAngka } from './konversi.js';
+import { hitungQtyLtr, parseAngka } from '../src/services/konversi.js';
 
 describe('hitungQtyLtr — BR-03', () => {
   test('membulatkan ke BAWAH, bukan ke terdekat', () => {

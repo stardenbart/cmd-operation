@@ -11,7 +11,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { allocateFifo } from './fifo.js';
+import { allocateFifo } from '../src/services/fifo.js';
 
 /** Pembantu: batch prepast dengan nilai wajar. */
 function batch(id, qtyRemainingLtr, prepastFinish, supplierId = 1) {

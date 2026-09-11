@@ -15,21 +15,43 @@ import { pool } from '../db/pool.js';
 import { selisihMenit } from './waktu.js';
 import { anchorSiloLangsung } from './standingSilo.js';
 
+/**
+ * Kg Receiving yang belum dapat dikonversi ke liter — Berat Jenis-nya masih
+ * kosong. Ini kondisi SEKARANG, bukan sesuatu yang punya arti historis, jadi
+ * dipakai apa adanya baik oleh mode real-time maupun snapshot rentang waktu
+ * di routes/silo.js.
+ */
+export async function kgBelumTerkonversi() {
+  const [[baris]] = await pool.query(
+    `SELECT COALESCE(SUM(qty_kg), 0) AS kg, COUNT(*) AS jumlah
+       FROM receiving
+      WHERE berat_jenis IS NULL
+        AND status_approval NOT IN ('Rejected', 'REVISED', 'VOIDED')`,
+  );
+  return {
+    kgBelumTerkonversi: Number(baris.kg),
+    jumlahReceivingBelumTerkonversi: Number(baris.jumlah),
+  };
+}
+
 /** Kartu silo + ringkasan stok, real-time. */
 export async function siloLive() {
-  const [baris] = await pool.query(
-    `SELECT v.silo_id, v.kode, v.silo_name, v.is_buffer, v.urutan,
-            v.vol_aktual_ltr, v.jumlah_batch_aktif,
-            v.kapasitas_maks_ltr, v.toleransi_ltr,
-            v.kapasitas_dengan_toleransi_ltr, v.vol_tersedia_ltr,
-            v.persen_isi, v.dalam_toleransi, v.standing_time_anchor,
-            v.monitoring_interval_jam,
-            m.last_check_at, m.last_ph, m.last_temp,
-            m.menit_sejak_cek, m.status_cek, m.standing_time_menit
-       FROM v_silo_volume v
-       JOIN v_silo_monitoring_status m ON m.silo_id = v.silo_id
-      ORDER BY v.urutan`,
-  );
+  const [[baris], kg] = await Promise.all([
+    pool.query(
+      `SELECT v.silo_id, v.kode, v.silo_name, v.is_buffer, v.urutan,
+              v.vol_aktual_ltr, v.jumlah_batch_aktif,
+              v.kapasitas_maks_ltr, v.toleransi_ltr,
+              v.kapasitas_dengan_toleransi_ltr, v.vol_tersedia_ltr,
+              v.persen_isi, v.dalam_toleransi, v.standing_time_anchor,
+              v.monitoring_interval_jam,
+              m.last_check_at, m.last_ph, m.last_temp,
+              m.menit_sejak_cek, m.status_cek, m.standing_time_menit
+         FROM v_silo_volume v
+         JOIN v_silo_monitoring_status m ON m.silo_id = v.silo_id
+        ORDER BY v.urutan`,
+    ),
+    kgBelumTerkonversi(),
+  ]);
 
   // Anchor dihitung ulang dari batch AKTIF yang nyata (bukan kolom tersimpan
   // yang bisa basi, bukan pula rekonstruksi transfer yang rapuh).
@@ -51,6 +73,7 @@ export async function siloLive() {
       totalKapasitasLtr: penyimpanan.reduce((s, b) => s + Number(b.kapasitas_maks_ltr), 0),
       perluDicek: baris.filter((b) => b.status_cek === 'PERLU_DICEK').length,
       melampauiNominal: baris.filter((b) => b.dalam_toleransi).length,
+      ...kg,
     },
   };
 }

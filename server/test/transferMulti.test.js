@@ -1,6 +1,6 @@
 /**
- * Uji integrasi transfer multi-baris - beberapa MT dari silo berbeda, satu
- * waktu, satu transaksi (atomik).
+ * Uji integrasi transfer multi-baris - beberapa MT dari silo berbeda dengan
+ * waktu bersama atau waktu per baris, dalam satu transaksi (atomik).
  */
 
 import { test, describe, before, beforeEach, after } from 'node:test';
@@ -77,6 +77,123 @@ describe('transfer.buatBanyak', () => {
     );
     assert.equal(new Date(baris[0].trf_time).getTime(), new Date(baris[1].trf_time).getTime());
     assert.deepEqual(baris.map((b) => b.batch), ['HRC1', 'HRC2']);
+  });
+
+  test('mode MANUAL menyimpan waktu yang berbeda pada setiap transfer', async () => {
+    await isiSilo(SILO.satu, 1000);
+    await isiSilo(SILO.dua, 800);
+
+    const hasil = await transfer.buatBanyak(
+      {
+        modeBatch: 'MANUAL',
+        baris: [
+          {
+            trfTime: W(12),
+            siloAsalId: SILO.satu,
+            jenis: 'PEMAKAIAN PRODUKSI',
+            volumeLtr: 400,
+            tankId: TANK_HRC.id,
+            batchPrefix: TANK_HRC.prefix,
+            batchNomor: 1,
+          },
+          {
+            trfTime: W(13),
+            siloAsalId: SILO.dua,
+            jenis: 'PEMAKAIAN PRODUKSI',
+            volumeLtr: 300,
+            tankId: TANK_HRC.id,
+            batchPrefix: TANK_HRC.prefix,
+            batchNomor: 2,
+          },
+        ],
+      },
+      AKTOR.operator, IP_UJI,
+    );
+
+    const [baris] = await pool.query(
+      'SELECT trf_time, standing_time_menit FROM transfer WHERE kode IN (?, ?) ORDER BY id',
+      hasil.transfers.map((t) => t.kode),
+    );
+    assert.equal(new Date(baris[0].trf_time).getTime(), W(12).getTime());
+    assert.equal(new Date(baris[1].trf_time).getTime(), W(13).getTime());
+    assert.deepEqual(baris.map((b) => Number(b.standing_time_menit)), [240, 300]);
+  });
+
+  test('mode MANUAL menolak waktu yang kosong pada salah satu transfer secara atomik', async () => {
+    await isiSilo(SILO.satu, 1000);
+    await isiSilo(SILO.dua, 800);
+
+    await assert.rejects(
+      transfer.buatBanyak(
+        {
+          modeBatch: 'MANUAL',
+          baris: [
+            {
+              trfTime: W(12),
+              siloAsalId: SILO.satu,
+              jenis: 'PEMAKAIAN PRODUKSI',
+              volumeLtr: 400,
+              tankId: TANK_HRC.id,
+              batchPrefix: TANK_HRC.prefix,
+              batchNomor: 1,
+            },
+            {
+              siloAsalId: SILO.dua,
+              jenis: 'PEMAKAIAN PRODUKSI',
+              volumeLtr: 300,
+              tankId: TANK_HRC.id,
+              batchPrefix: TANK_HRC.prefix,
+              batchNomor: 2,
+            },
+          ],
+        },
+        AKTOR.operator, IP_UJI,
+      ),
+      (err) => err.code === 'TRANSFER_TIME_REQUIRED' && err.details?.baris === 2,
+    );
+
+    assert.equal(await volumeSilo(SILO.satu), 1000);
+    assert.equal(await volumeSilo(SILO.dua), 800);
+    const [[{ n }]] = await pool.query('SELECT COUNT(*) n FROM transfer');
+    assert.equal(n, 0);
+  });
+
+  test('mode MANUAL menolak waktu mundur untuk transfer dari silo yang sama', async () => {
+    await isiSilo(SILO.satu, 1000);
+
+    await assert.rejects(
+      transfer.buatBanyak(
+        {
+          modeBatch: 'MANUAL',
+          baris: [
+            {
+              trfTime: W(13),
+              siloAsalId: SILO.satu,
+              jenis: 'PEMAKAIAN PRODUKSI',
+              volumeLtr: 200,
+              tankId: TANK_HRC.id,
+              batchPrefix: TANK_HRC.prefix,
+              batchNomor: 1,
+            },
+            {
+              trfTime: W(12),
+              siloAsalId: SILO.satu,
+              jenis: 'PEMAKAIAN PRODUKSI',
+              volumeLtr: 200,
+              tankId: TANK_HRC.id,
+              batchPrefix: TANK_HRC.prefix,
+              batchNomor: 2,
+            },
+          ],
+        },
+        AKTOR.operator, IP_UJI,
+      ),
+      (err) => err.code === 'TRANSFER_TIME_ORDER' && err.details?.baris === 2,
+    );
+
+    assert.equal(await volumeSilo(SILO.satu), 1000);
+    const [[{ n }]] = await pool.query('SELECT COUNT(*) n FROM transfer');
+    assert.equal(n, 0);
   });
 
   test('mode SAMA memakai satu batch bersama untuk seluruh tank PILIH', async () => {

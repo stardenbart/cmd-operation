@@ -32,13 +32,16 @@ const dariSkala = (u) => u / SKALA;
 
 /**
  * @typedef {object} Pecahan
- * @property {number} siloId
- * @property {number} volumeLtr
+ * @property {number|null|undefined} siloId
+ * @property {number|null|undefined} volumeLtr
  *
  * @param {Pecahan[]} pecahan
- * @param {number} sisaBatchLtr        sisa volume batch induk (BR-06)
+ * @param {number|null} sisaBatchLtr    sisa volume batch induk (BR-06).
+ *   `null` berarti BELUM DIKETAHUI — Receiving induknya belum punya Berat
+ *   Jenis, jadi volume liternya belum dapat dihitung sama sekali. Ini beda
+ *   dari "habis" (0): batch belum tentu habis, hanya belum bisa diukur.
  * @param {Map<number, number>} kapasitasTersisa  siloId → liter tersedia
- * @returns {{totalLtr: number, sisaTakTeralokasi: number, pecahan: Pecahan[]}}
+ * @returns {{totalLtr: number, sisaTakTeralokasi: number|null, pecahan: Pecahan[]}}
  */
 export { PecahanError };
 
@@ -49,22 +52,31 @@ export function validasiPecahan(
   sisaBatasKeras = null,
 ) {
   if (!Array.isArray(pecahan) || pecahan.length === 0) {
-    throw new PecahanError('FR-29.1', 'Isi minimal satu silo tujuan');
+    throw new PecahanError('FR-29.1', 'Isi minimal satu baris Prepast');
   }
 
-  const sisaBatch = keSkala(sisaBatchLtr ?? 0);
-  if (sisaBatch <= 0) {
+  // Sisa belum diketahui (Berat Jenis Receiving induk belum diisi) berbeda
+  // dari sisa yang sudah diketahui habis. Di sini belum ada angka untuk
+  // dibandingkan sama sekali, jadi volume tiap baris WAJIB kosong — silo
+  // tujuan tetap boleh dipilih, hanya literannya yang menyusul nanti.
+  const sisaTidakDiketahui = sisaBatchLtr === null;
+  const sisaBatch = sisaTidakDiketahui ? 0 : keSkala(sisaBatchLtr ?? 0);
+
+  if (!sisaTidakDiketahui && sisaBatch <= 0) {
     throw new PecahanError(
       'BR-06',
       'Batch induk sudah habis — tidak ada sisa yang dapat diprepast',
     );
   }
 
-  // FR-29.5 — silo tidak boleh berulang.
+  // FR-29.5 — silo yang sudah ditentukan tidak boleh berulang. Beberapa baris
+  // tanpa silo tetap sah karena masing-masing akan dilengkapi sebagai record
+  // terpisah melalui daftar "Perlu dilengkapi".
   // Di UI, silo yang sudah dipilih dihilangkan dari baris berikutnya sehingga
   // keadaan ini mustahil; pemeriksaan di sini menutup jalur API langsung.
   const terlihat = new Set();
   for (const p of pecahan) {
+    if (p.siloId == null) continue;
     if (terlihat.has(p.siloId)) {
       throw new PecahanError(
         'FR-29.5',
@@ -79,7 +91,33 @@ export function validasiPecahan(
   const melampauiNominal = [];
 
   for (const p of pecahan) {
-    const volume = keSkala(p.volumeLtr ?? 0);
+    if (p.siloId != null && !kapasitasTersisa.has(p.siloId)) {
+      throw new PecahanError(
+        'SILO_NOT_FOUND',
+        `Silo id ${p.siloId} tidak ditemukan atau tidak tersedia sebagai tujuan prepast`,
+        { siloId: p.siloId },
+      );
+    }
+
+    // Volume boleh menyusul. Baris tetap dibuat sebagai record GANTUNG,
+    // tetapi belum mengurangi buffer dan belum menambah isi silo.
+    if (p.volumeLtr == null || p.volumeLtr === '') continue;
+
+    // Sisa batch induk belum diketahui — tidak ada angka untuk memvalidasi
+    // volume ini terhadapnya. Menerimanya begitu saja berisiko volume total
+    // Prepast melebihi volume fisik Receiving yang sesungguhnya begitu Berat
+    // Jenis-nya diketahui. Volume harus menyusul lewat pelengkapan setelah
+    // Berat Jenis Receiving terisi.
+    if (sisaTidakDiketahui) {
+      throw new PecahanError(
+        'BERAT_JENIS_BELUM_DIISI',
+        'Volume belum dapat diisi karena Berat Jenis Receiving induk belum dilengkapi. ' +
+          'Lengkapi Berat Jenis Receiving terlebih dahulu, baru isi Volume di sini.',
+        { siloId: p.siloId ?? null },
+      );
+    }
+
+    const volume = keSkala(p.volumeLtr);
 
     if (volume <= 0) {
       throw new PecahanError(
@@ -89,12 +127,11 @@ export function validasiPecahan(
       );
     }
 
-    if (!kapasitasTersisa.has(p.siloId)) {
-      throw new PecahanError(
-        'SILO_NOT_FOUND',
-        `Silo id ${p.siloId} tidak ditemukan atau tidak tersedia sebagai tujuan prepast`,
-        { siloId: p.siloId },
-      );
+    // Silo boleh menyusul. Volume tetap divalidasi terhadap sisa batch induk,
+    // sedangkan kapasitas silo diperiksa saat silo tersebut dilengkapi.
+    if (p.siloId == null) {
+      total += volume;
+      continue;
     }
 
     // FR-29.7 — tiap baris dibatasi kapasitas silo tujuannya masing-masing.
@@ -141,8 +178,10 @@ export function validasiPecahan(
     total += volume;
   }
 
-  // BR-06 — total tidak boleh melebihi sisa batch induk
-  if (total > sisaBatch) {
+  // BR-06 — total tidak boleh melebihi sisa batch induk. Tidak berlaku saat
+  // sisanya belum diketahui: totalnya selalu 0 di sana karena setiap baris
+  // dengan volume sudah ditolak di atas.
+  if (!sisaTidakDiketahui && total > sisaBatch) {
     throw new PecahanError(
       'BR-06',
       `Total ${dariSkala(total)} L melebihi sisa batch induk ${dariSkala(sisaBatch)} L`,
@@ -151,9 +190,12 @@ export function validasiPecahan(
   }
 
   return {
-    totalLtr: dariSkala(total),
-    sisaTakTeralokasi: dariSkala(sisaBatch - total),
-    pecahan: pecahan.map((p) => ({ siloId: p.siloId, volumeLtr: p.volumeLtr })),
+    totalLtr: sisaTidakDiketahui ? 0 : dariSkala(total),
+    sisaTakTeralokasi: sisaTidakDiketahui ? null : dariSkala(sisaBatch - total),
+    pecahan: pecahan.map((p) => ({
+      siloId: p.siloId ?? null,
+      volumeLtr: p.volumeLtr == null || p.volumeLtr === '' ? null : p.volumeLtr,
+    })),
     // Baris yang isinya melampaui kapasitas nominal namun masih di dalam
     // toleransi (BR-24). Kosong berarti seluruhnya di dalam nominal.
     melampauiNominal,

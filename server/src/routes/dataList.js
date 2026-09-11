@@ -45,6 +45,12 @@ const skemaDaftar = z.object({
   )),
   draftSaja: opsional(z.coerce.boolean()),
   aktifSaja: opsional(z.coerce.boolean()),
+  // Hanya berlaku untuk modul receiving - lihat MODUL.receiving.filter di
+  // dataList.js. Dituju langsung dari kartu "Menunggu Berat Jenis" Dashboard.
+  bjKosong: opsional(z.coerce.boolean()),
+  // Hanya berlaku untuk modul transfer - Pindah Silo yang tercatat melebihi
+  // batas keras silo tujuan (BR-24 kini soft cap, lihat transfer.js).
+  lewatKapasitas: opsional(z.coerce.boolean()),
   // Tanggal saja ditafsirkan sebagai HARI SETEMPAT, bukan tengah malam UTC.
   // Tanpa ini filter "25 Agustus sampai 25 Agustus" mengembalikan nol baris
   // padahal ada enam (B-7).

@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   batasTanggal, deteksiRollover, formatStandingTime, normalisasiWaktuFilter,
   selisihMenit,
-} from './waktu.js';
+} from '../src/services/waktu.js';
 
 const T = (iso) => new Date(iso);
 

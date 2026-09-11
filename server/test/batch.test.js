@@ -14,7 +14,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { bentukBatch, normalisasiBatch, batchPindahSilo, PREFIKS_SAH,
   batchUntukTank,
-} from './batch.js';
+} from '../src/services/batch.js';
 
 describe('bentukBatch — input baru (BR-21)', () => {
   test('merakit bentuk kanonik dari prefiks dan nomor', () => {

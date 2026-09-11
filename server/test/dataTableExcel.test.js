@@ -5,7 +5,7 @@ import {
   bangunBerkasDataTabel,
   jumlahDataTabel,
   namaBerkasDataTabel,
-} from './dataTableExcel.js';
+} from '../src/services/dataTableExcel.js';
 
 const data = {
   dari: '2026-08-01',

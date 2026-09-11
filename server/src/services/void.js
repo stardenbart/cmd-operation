@@ -24,6 +24,16 @@ const TABEL = {
   monitoring: 'monitoring',
 };
 
+/**
+ * Kolom volume "induk" per modul — dipakai tandaiVoid() untuk menentukan
+ * apakah qty_remaining_ltr boleh dipaksa 0 atau harus ikut NULL.
+ */
+const KOLOM_VOLUME = {
+  receiving: 'qty_ltr',
+  prepast: 'vol_prepast_ltr',
+  pengembalian: 'vol_prepast_ltr',
+};
+
 const BOLEH_DIVOID = ['Pending Approval', 'Approved', 'Rejected', 'Edit Requested'];
 
 /**
@@ -97,6 +107,13 @@ async function pulihkanInduk(conn, prepast) {
   );
   const induk = barisInduk[0];
   if (!induk) return null;
+
+  // Prepast draft yang dibuat dari Receiving tanpa Berat Jenis (lihat
+  // pecahanSilo.js) tidak pernah mengambil stok apa pun — volumenya sendiri
+  // pasti masih NULL. induk.qty_ltr pun pasti masih NULL (constraint
+  // ck_rcv_remaining memaksa keduanya pasangan), jadi tidak ada yang perlu
+  // dipulihkan; Receiving-nya dibiarkan apa adanya, masih gantung.
+  if (induk.qty_ltr == null) return null;
 
   const sisaBaru = Number(induk.qty_remaining_ltr) + Number(prepast.vol_prepast_ltr);
   const habis = sisaBaru >= Number(induk.qty_ltr);
@@ -176,10 +193,21 @@ async function tandaiVoid(conn, modul, id) {
   const tabel = TABEL[modul];
   const punyaFifo = modul !== 'monitoring' && modul !== 'transfer';
 
+  // Record gantung yang belum pernah punya volume (kolom volumenya masih
+  // NULL — Receiving tanpa Berat Jenis, atau Prepast draft tanpa Volume)
+  // TIDAK BOLEH mendapat qty_remaining_ltr = 0. Constraint database menuntut
+  // keduanya sama-sama NULL atau sama-sama terisi (migrasi 022/024) — 0
+  // berarti "volume nyata yang sudah habis", beda makna dari "belum pernah
+  // punya volume". CASE ini membaca kolomnya sendiri, bukan menambah query.
+  const kolomVolume = KOLOM_VOLUME[modul];
+  const remainingBaru = kolomVolume
+    ? `CASE WHEN \`${kolomVolume}\` IS NULL THEN NULL ELSE 0 END`
+    : '0';
+
   await conn.query(
     `UPDATE ${tabel}
         SET status_approval = 'VOIDED'
-            ${punyaFifo ? ", status_fifo = 'CLOSED', qty_remaining_ltr = 0" : ''}
+            ${punyaFifo ? `, status_fifo = 'CLOSED', qty_remaining_ltr = ${remainingBaru}` : ''}
       WHERE id = ?`,
     [id],
   );

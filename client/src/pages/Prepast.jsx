@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
-import { fmt, waktuSingkat, Field, Lencana, PesanGalat, PesanSukses, Kosong } from '../components/ui.jsx';
+import {
+  fmt, waktuSingkat, Field, Lencana, PesanGalat, PesanSukses, Kosong,
+} from '../components/ui.jsx';
 
 const OPRP_MIN = 81;
 const angka = (v) => parseFloat(String(v).replace(',', '.'));
@@ -34,6 +36,14 @@ export default function Prepast() {
     queryKey: ['prepast', 'buffer-queue'],
     queryFn: () => api.get('/prepast/buffer-queue'),
   });
+  // Preferensi tampilan GLOBAL (bukan per-halaman) — diatur Admin di Master
+  // Data Silo, berlaku sama untuk semua orang. Cache dibagi lintas halaman
+  // lewat kunci ['pengaturan'] yang sama.
+  const { data: pengaturan } = useQuery({
+    queryKey: ['pengaturan'],
+    queryFn: () => api.get('/pengaturan'),
+  });
+  const tampilkanSisaSilo = pengaturan?.data?.tampilkanSisaSilo ?? true;
   const { data: ctx } = useQuery({
     queryKey: ['prepast', 'form-context', batch?.id],
     queryFn: () => api.get(`/prepast/form-context/${batch.id}`),
@@ -53,7 +63,9 @@ export default function Prepast() {
       const d = res.data;
       setSukses(
         `${d.dibuat.length} record dibuat: ${d.dibuat.map((x) => x.kode).join(', ')}. ` +
-        `Total ${fmt(d.totalLtr)} L. Sisa batch induk ${fmt(d.sisaBatchIndukLtr)} L.` +
+        (d.sisaBatchIndukLtr === null
+          ? 'Volume belum dapat dihitung — Berat Jenis Receiving induk belum diisi.'
+          : `Total ${fmt(d.totalLtr)} L. Sisa batch induk ${fmt(d.sisaBatchIndukLtr)} L.`) +
         (d.gantung
           ? ` Perlu dilengkapi: ${d.fieldKosong.map((f) => f.label).join(', ')}.`
           : ' Data proses lengkap.'),
@@ -73,9 +85,21 @@ export default function Prepast() {
     if (k === 'prepastStart' && kontinu && nilai !== saranStart) setKontinu(false);
   };
 
+  // NULL berarti Receiving induknya belum punya Berat Jenis — volume liternya
+  // memang belum dapat dihitung, beda dari batch yang sungguh sudah habis.
+  const sisaTidakDiketahui = Boolean(batch) && batch.qty_remaining_ltr == null;
   const sisaBatch = batch ? Number(batch.qty_remaining_ltr) : 0;
   const totalPecahan = pecahan.reduce((s, p) => s + (angka(p.volumeLtr) || 0), 0);
   const sisaAlokasi = Math.round((sisaBatch - totalPecahan) * 100) / 100;
+  // Setiap baris yang terlihat adalah satu record. Silo dan volume yang kosong
+  // sengaja tidak dikirim agar backend menyimpannya sebagai NULL dan menagih
+  // keduanya lewat Dashboard.
+  const pecahanSiap = pecahan.map((p) => ({
+    ...(p.siloId ? { siloId: Number(p.siloId) } : {}),
+    ...(p.volumeLtr !== '' ? { volumeLtr: p.volumeLtr } : {}),
+  }));
+  const jumlahTanpaSilo = pecahanSiap.filter((p) => p.siloId === undefined).length;
+  const jumlahTanpaVolume = pecahanSiap.filter((p) => p.volumeLtr === undefined).length;
 
   // Silo yang sudah dipilih tidak muncul lagi di baris berikutnya —
   // FR-29.5 membuat SILO25A/25A mustahil, bukan sekadar tidak dianjurkan.
@@ -109,14 +133,12 @@ export default function Prepast() {
       if (!konfirmasiOprp) return;
     }
 
-    // Waktu Selesai kosong dikirim sebagai tidak-ada, bukan string kosong:
+    // Waktu Selesai dan Silo Tujuan yang kosong dikirim sebagai tidak-ada:
     // itulah yang membuat record MENGGANTUNG, bukan ditolak validasi.
     const { prepastFinish, ...prosesTanpaFinish } = proses;
     simpan.mutate({
       receivingId: batch.id,
-      pecahan: pecahan
-        .filter((p) => p.siloId && p.volumeLtr)
-        .map((p) => ({ siloId: Number(p.siloId), volumeLtr: p.volumeLtr })),
+      pecahan: pecahanSiap,
       ...prosesTanpaFinish,
       ...(prepastFinish ? { prepastFinish } : {}),
       konfirmasiRollover,
@@ -152,7 +174,11 @@ export default function Prepast() {
                   {i === 0 && <> <Lencana nada="baik">Terlama</Lencana></>}
                 </td>
                 <td>{r.supplier_name}</td>
-                <td className="num">{fmt(r.qty_remaining_ltr)} L</td>
+                <td className="num">
+                  {r.qty_remaining_ltr == null
+                    ? <Lencana nada="waspada">Volume belum diketahui</Lencana>
+                    : `${fmt(r.qty_remaining_ltr)} L`}
+                </td>
                 <td>{waktuSingkat(r.finish_time)}</td>
                 <td style={{ textAlign: 'right' }}>
                   <button type="button" className="btn btn--kedua btn--kecil" onClick={() => setBatch(r)}>
@@ -172,7 +198,9 @@ export default function Prepast() {
       <div className="kartu tumpuk">
         <div className="kartu__kepala">
           <h2>{batch.kode} · {batch.supplier_name}</h2>
-          <span className="label">Sisa {fmt(sisaBatch)} L</span>
+          <span className="label">
+            {sisaTidakDiketahui ? 'Sisa belum diketahui — Berat Jenis Receiving belum diisi' : `Sisa ${fmt(sisaBatch)} L`}
+          </span>
           <button type="button" className="btn btn--hantu btn--kecil" onClick={() => setBatch(null)}>
             Ganti batch
           </button>
@@ -249,33 +277,45 @@ export default function Prepast() {
 
         {pecahan.map((p, i) => (
           <div className="pecahan-baris" key={i}>
-            <Field label={`Silo ${i + 1}`}>
+            <Field label={`Silo ${i + 1}`} bantuan="Boleh dikosongkan dulu—record masuk Perlu dilengkapi">
               <select value={p.siloId} onChange={(e) => ubahPecahan(i, 'siloId', e.target.value)}>
                 <option value="">Pilih silo</option>
                 {siloTersedia(i).map((s) => (
                   <option key={s.silo_id} value={s.silo_id}>
-                    {s.silo_name} · sisa {fmt(s.vol_tersedia_ltr)} L
+                    {s.silo_name}{tampilkanSisaSilo ? ` · sisa ${fmt(s.vol_tersedia_ltr)} L` : ''}
                   </option>
                 ))}
               </select>
             </Field>
-            <Field label="Volume (L)">
+            <Field
+              label="Volume (L)"
+              bantuan={sisaTidakDiketahui
+                ? 'Lengkapi Berat Jenis Receiving ini dulu di Data List, baru Volume bisa diisi'
+                : 'Boleh dikosongkan dulu—record masuk Perlu dilengkapi'}
+            >
               <input
                 className="angka-input"
                 inputMode="decimal"
                 value={p.volumeLtr}
                 onChange={(e) => ubahPecahan(i, 'volumeLtr', e.target.value)}
+                disabled={sisaTidakDiketahui}
               />
             </Field>
-            <button
-              type="button"
-              className="btn btn--bahaya btn--kecil"
-              onClick={() => setPecahan(pecahan.filter((_, idx) => idx !== i))}
-              disabled={pecahan.length === 1}
-              aria-label={`Hapus silo baris ${i + 1}`}
-            >
-              Hapus
-            </button>
+            {/* Spacer label kosong — bukan tombolnya langsung dalam grid —
+                supaya turun sejajar dengan kotak Silo/Volume di sebelahnya
+                (lihat catatan align-items pada .pecahan-baris di app.css). */}
+            <div className="field">
+              <span className="label">&nbsp;</span>
+              <button
+                type="button"
+                className="btn btn--bahaya btn--kecil"
+                onClick={() => setPecahan(pecahan.filter((_, idx) => idx !== i))}
+                disabled={pecahan.length === 1}
+                aria-label={`Hapus silo baris ${i + 1}`}
+              >
+                Hapus
+              </button>
+            </div>
           </div>
         ))}
 
@@ -291,7 +331,7 @@ export default function Prepast() {
           <button
             type="button"
             className="btn btn--kedua btn--kecil"
-            disabled={sisaAlokasi <= 0}
+            disabled={sisaTidakDiketahui || sisaAlokasi <= 0}
             onClick={() => {
               const i = pecahan.length - 1;
               const lain = pecahan.reduce((s, p, idx) => (idx === i ? s : s + (angka(p.volumeLtr) || 0)), 0);
@@ -302,22 +342,40 @@ export default function Prepast() {
           </button>
         </div>
 
-        <div className={`pecahan-total ${sisaAlokasi === 0 ? 'pecahan-total--pas' : sisaAlokasi < 0 ? 'pecahan-total--lebih' : ''}`}>
-          <span className="label">Teralokasi</span>
-          <b>{fmt(totalPecahan, 2)} / {fmt(sisaBatch, 2)} L</b>
-          <span className="dorong">
-            {sisaAlokasi === 0 ? 'Pas'
-              : sisaAlokasi > 0 ? `Sisa ${fmt(sisaAlokasi, 2)} L tetap di buffer`
-              : `Lebih ${fmt(-sisaAlokasi, 2)} L`}
-          </span>
-        </div>
+        {sisaTidakDiketahui ? (
+          <div className="pesan pesan--info" role="status">
+            Volume belum dapat dialokasikan — Berat Jenis Receiving {batch.kode} belum
+            diisi. Silo tujuan tetap boleh dipilih sekarang; Volume menyusul lewat
+            "Lengkapi" setelah Berat Jenis-nya tersedia.
+          </div>
+        ) : (
+          <div className={`pecahan-total ${sisaAlokasi === 0 ? 'pecahan-total--pas' : sisaAlokasi < 0 ? 'pecahan-total--lebih' : ''}`}>
+            <span className="label">Teralokasi</span>
+            <b>{fmt(totalPecahan, 2)} / {fmt(sisaBatch, 2)} L</b>
+            <span className="dorong">
+              {sisaAlokasi === 0 ? 'Pas'
+                : sisaAlokasi > 0 ? `Sisa ${fmt(sisaAlokasi, 2)} L tetap di buffer`
+                : `Lebih ${fmt(-sisaAlokasi, 2)} L`}
+            </span>
+          </div>
+        )}
+
+        {(jumlahTanpaSilo > 0 || jumlahTanpaVolume > 0) && (
+          <div className="pesan pesan--info" role="status">
+            Record tetap dapat disimpan. Yang masih kosong:
+            {jumlahTanpaSilo > 0 ? ` silo tujuan pada ${jumlahTanpaSilo} record` : ''}
+            {jumlahTanpaSilo > 0 && jumlahTanpaVolume > 0 ? ';' : ''}
+            {jumlahTanpaVolume > 0 ? ` volume pada ${jumlahTanpaVolume} record` : ''}.
+            {' '}Data tersebut akan muncul di Dashboard bagian Perlu dilengkapi.
+          </div>
+        )}
 
         <div className="baris">
           <button
             className="btn btn--utama dorong"
-            disabled={simpan.isPending || sisaAlokasi < 0 || totalPecahan <= 0}
+            disabled={simpan.isPending || sisaAlokasi < 0}
           >
-            {simpan.isPending ? 'Menyimpan…' : `Simpan ${pecahan.filter((p) => p.siloId && p.volumeLtr).length} record`}
+            {simpan.isPending ? 'Menyimpan…' : `Simpan ${pecahanSiap.length} record`}
           </button>
         </div>
       </div>

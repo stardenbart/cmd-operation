@@ -30,7 +30,7 @@ export function wajibLogin(req, res, next) {
       nama: klaim.nama,
       role: klaim.role,
       // Hak akses custom (FR-34) - array bila ada, selalu tersedia untuk can().
-      cp: Array.isArray(klaim.cp) ? klaim.cp : [],
+      cp: Array.isArray(klaim.cp) ? klaim.cp : [], // values cp darimana
     };
     return next();
   } catch (err) {
