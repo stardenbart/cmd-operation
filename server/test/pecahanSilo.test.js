@@ -54,14 +54,14 @@ describe('validasiPecahan — kasus sah', () => {
 
     assert.equal(hasil.totalLtr, 0);
     assert.equal(hasil.sisaTakTeralokasi, 5000);
-    assert.deepEqual(hasil.pecahan, [{ siloId: 2, volumeLtr: null }]);
+    assert.deepEqual(hasil.pecahan, [{ siloId: 2, volumeLtr: null, melebihiBatasKeras: false }]);
   });
 
   test('silo dan volume boleh sama-sama kosong', () => {
     const hasil = validasiPecahan([{}], 5000, KAPASITAS);
 
     assert.equal(hasil.totalLtr, 0);
-    assert.deepEqual(hasil.pecahan, [{ siloId: null, volumeLtr: null }]);
+    assert.deepEqual(hasil.pecahan, [{ siloId: null, volumeLtr: null, melebihiBatasKeras: false }]);
   });
 
   test('menjaga presisi dua desimal', () => {
@@ -166,17 +166,23 @@ describe('validasiPecahan — sisa batch belum diketahui (Receiving tanpa Berat 
 });
 
 describe('validasiPecahan — FR-29.7 kapasitas per silo', () => {
-  test('menolak volume yang melebihi kapasitas tersisa silo tujuan', () => {
-    // Silo 4 hanya menyisakan 500 L
-    assert.throws(
-      () => validasiPecahan([{ siloId: 4, volumeLtr: 1000 }], 5000, KAPASITAS),
-      /kapasitas/i,
-    );
+  // Kapasitas tidak lagi memblokir Prepast (keputusan operasional, September
+  // 2026, sama seperti Pindah Silo) — melebihinya hanya menandai baris yang
+  // bersangkutan, tidak pernah melempar galat.
+  test('menerima tapi menandai volume yang melebihi kapasitas tersisa silo tujuan', () => {
+    // Silo 4 hanya menyisakan 500 L, dan tanpa peta batas keras (param
+    // ke-4) batasnya tetap kapasitas nominal itu sendiri.
+    const hasil = validasiPecahan([{ siloId: 4, volumeLtr: 1000 }], 5000, KAPASITAS);
+
+    assert.equal(hasil.totalLtr, 1000);
+    assert.equal(hasil.pecahan[0].melebihiBatasKeras, true);
+    assert.equal(hasil.melampauiNominal[0].kelebihanLtr, 500);
   });
 
   test('menerima volume yang tepat sama dengan kapasitas tersisa', () => {
     const hasil = validasiPecahan([{ siloId: 4, volumeLtr: 500 }], 5000, KAPASITAS);
     assert.equal(hasil.totalLtr, 500);
+    assert.equal(hasil.pecahan[0].melebihiBatasKeras, false);
   });
 
   test('menolak silo yang tidak ada dalam daftar kapasitas', () => {
@@ -245,10 +251,10 @@ describe('validasiPecahan — kode aturan pada error', () => {
     );
   });
 
-  test('melebihi kapasitas silo memakai kode FR-29.7', () => {
+  test('melebihi kapasitas silo TIDAK LAGI melempar galat — hanya ditandai', () => {
     assert.equal(
       kodeError(() => validasiPecahan([{ siloId: 4, volumeLtr: 1000 }], 5000, KAPASITAS)),
-      'FR-29.7',
+      null,
     );
   });
 
@@ -278,18 +284,24 @@ describe('validasiPecahan — BR-24 toleransi kapasitas', () => {
     );
 
     assert.equal(hasil.totalLtr, 1200);
+    assert.equal(hasil.pecahan[0].melebihiBatasKeras, false);
     assert.deepEqual(
       hasil.melampauiNominal,
-      [{ siloId: 4, volumeLtr: 1200, sisaNominalLtr: 500, kelebihanLtr: 700 }],
+      [{
+        siloId: 4, volumeLtr: 1200, sisaNominalLtr: 500, kelebihanLtr: 700,
+        melebihiBatasKeras: false, batasKerasLtr: 1500,
+      }],
     );
   });
 
-  test('menolak volume yang melampaui batas keras', () => {
-    assert.equal(
-      kodeError(() => validasiPecahan(
-        [{ siloId: 4, volumeLtr: 1600 }], 5000, SISA_NOMINAL, SISA_BATAS_KERAS)),
-      'FR-29.7',
+  test('menerima tapi menandai volume yang melampaui batas keras', () => {
+    const hasil = validasiPecahan(
+      [{ siloId: 4, volumeLtr: 1600 }], 5000, SISA_NOMINAL, SISA_BATAS_KERAS,
     );
+
+    assert.equal(hasil.totalLtr, 1600);
+    assert.equal(hasil.pecahan[0].melebihiBatasKeras, true);
+    assert.equal(hasil.melampauiNominal[0].melebihiBatasKeras, true);
   });
 
   test('menerima volume tepat pada batas keras', () => {
@@ -301,22 +313,23 @@ describe('validasiPecahan — BR-24 toleransi kapasitas', () => {
 
   test('silo yang SUDAH melampaui nominal hanya menyisakan toleransi tersisa', () => {
     // Silo penuh 6000/6000 lalu sudah kemasukan 700 L: sisa nominal 0,
-    // sisa batas keras 300. Volume 500 HARUS ditolak — bukan diterima
-    // karena toleransi dianggap masih utuh 1000.
+    // sisa batas keras 300. Volume 500 HARUS ditandai melebihi batas keras —
+    // bukan dianggap dalam toleransi karena toleransi dianggap masih utuh 1000.
     const nominalHabis = new Map([[3, 0]]);
     const batasKerasSisa = new Map([[3, 300]]);
 
-    assert.equal(
-      kodeError(() => validasiPecahan(
-        [{ siloId: 3, volumeLtr: 500 }], 5000, nominalHabis, batasKerasSisa)),
-      'FR-29.7',
+    const lewat = validasiPecahan(
+      [{ siloId: 3, volumeLtr: 500 }], 5000, nominalHabis, batasKerasSisa,
     );
+    assert.equal(lewat.totalLtr, 500);
+    assert.equal(lewat.pecahan[0].melebihiBatasKeras, true);
 
-    // 300 L tepat pada batas masih diterima
+    // 300 L tepat pada batas masih diterima, tidak ditandai melebihi batas keras
     const hasil = validasiPecahan(
       [{ siloId: 3, volumeLtr: 300 }], 5000, nominalHabis, batasKerasSisa,
     );
     assert.equal(hasil.totalLtr, 300);
+    assert.equal(hasil.pecahan[0].melebihiBatasKeras, false);
     assert.equal(hasil.melampauiNominal[0].kelebihanLtr, 300);
   });
 
@@ -328,9 +341,8 @@ describe('validasiPecahan — BR-24 toleransi kapasitas', () => {
   });
 
   test('tanpa peta batas keras, batasnya tetap kapasitas nominal', () => {
-    assert.equal(
-      kodeError(() => validasiPecahan([{ siloId: 4, volumeLtr: 600 }], 5000, SISA_NOMINAL)),
-      'FR-29.7',
-    );
+    const hasil = validasiPecahan([{ siloId: 4, volumeLtr: 600 }], 5000, SISA_NOMINAL);
+    assert.equal(hasil.totalLtr, 600);
+    assert.equal(hasil.pecahan[0].melebihiBatasKeras, true);
   });
 });

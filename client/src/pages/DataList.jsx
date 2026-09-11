@@ -315,7 +315,7 @@ export default function DataList() {
           </label>
         )}
 
-        {modul === 'transfer' && (
+        {(modul === 'transfer' || modul === 'prepast') && (
           <label className="baris" style={{ gap: 8, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -352,6 +352,9 @@ export default function DataList() {
                   <td>
                     <span className="angka">{b.kode}</span>
                     {b.isDraft && <> <Lencana nada="waspada">Draft</Lencana></>}
+                    {/* Sama seperti badge di kartu Silo Dashboard — kapasitas
+                        nominal tidak lagi memblokir, hanya ditandai. */}
+                    {b.melampauiKapasitas && <> <Lencana nada="waspada">Melampaui Nominal</Lencana></>}
                   </td>
                   <td>
                     {b.ringkasan}

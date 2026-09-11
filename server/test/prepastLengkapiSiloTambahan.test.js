@@ -188,22 +188,33 @@ describe('Lengkapi Prepast — silo tambahan', () => {
     );
   });
 
-  test('kapasitas silo tambahan yang terlampaui ditolak — FR-29.7', async () => {
+  test('kapasitas silo tambahan yang terlampaui tetap tersimpan, ditandai — BR-24', async () => {
+    // Kapasitas tidak lagi memblokir Prepast (keputusan operasional, sama
+    // seperti Pindah Silo) — baris tambahan yang melampaui bahkan batas
+    // keras tetap dibuat, hanya ditandai melampaui_kapasitas untuk ditinjau.
     const rcv = await buatReceiving(10000);
     const id = await buatDraftKosong(rcv.id);
 
     // SILO6 (id 7 di seed) nominal 3.000 L, batas keras 4.000 L.
-    await assert.rejects(
-      () => prepast.lengkapiDraft(
-        id,
-        {
-          siloId: SILO.satu,
-          volumeLtr: 1000,
-          pecahanTambahan: [{ siloId: 7, volumeLtr: 4001 }],
-        },
-        AKTOR.operator, IP_UJI,
-      ),
-      (err) => err.code === 'FR-29.7',
+    const hasil = await prepast.lengkapiDraft(
+      id,
+      {
+        siloId: SILO.satu,
+        volumeLtr: 1000,
+        pecahanTambahan: [{ siloId: 7, volumeLtr: 4001 }],
+      },
+      AKTOR.operator, IP_UJI,
     );
+
+    assert.equal(hasil.pecahanTambahan.length, 1);
+    assert.equal(hasil.pecahanTambahan[0].melampauiKapasitas, true);
+
+    const [[tambahan]] = await pool.query(
+      'SELECT silo_tujuan_id, vol_prepast_ltr, melampaui_kapasitas FROM prepast_record WHERE id = ?',
+      [hasil.pecahanTambahan[0].id],
+    );
+    assert.equal(Number(tambahan.silo_tujuan_id), 7);
+    assert.equal(Number(tambahan.vol_prepast_ltr), 4001);
+    assert.equal(Boolean(tambahan.melampaui_kapasitas), true);
   });
 });

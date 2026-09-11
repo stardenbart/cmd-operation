@@ -63,7 +63,7 @@ const MODUL = {
     sql: `
       SELECT p.id, p.kode, p.vol_prepast_ltr AS volume_ltr, p.qty_remaining_ltr,
              p.prepast_finish AS waktu, p.status_approval, p.status_fifo,
-             p.is_gantung, p.rejection_comment,
+             p.is_gantung, p.melampaui_kapasitas, p.rejection_comment,
              CONCAT(COALESCE(sup.supplier_name, 'Tidak diketahui'), ' ke ',
                     COALESCE(s.silo_name, 'Belum ditentukan')) AS ringkasan,
              o.nama_lengkap AS operator_nama, p.operator_id
@@ -86,6 +86,9 @@ const MODUL = {
       draftSaja: 'p.is_gantung = TRUE',
       // Aktif = batch masih menyimpan susu di silo ini (belum habis ditransfer).
       aktifSaja: "(p.status_fifo = 'ACTIVE' AND p.qty_remaining_ltr > 0)",
+      // Ditinjau SPV/QA — Prepast yang tercatat melebihi batas keras silo
+      // tujuan (tidak lagi diblokir sistem, lihat pecahanSilo.js).
+      lewatKapasitas: 'p.melampaui_kapasitas = TRUE',
       dariTanggal: 'p.prepast_finish >= ?',
       sampaiTanggal: 'p.prepast_finish <= ?',
       cari: '(p.kode LIKE ? OR sup.supplier_name LIKE ?)',
@@ -441,6 +444,9 @@ export async function daftar(modul, kueri, aktor) {
       statusApproval: b.status_approval,
       statusFifo: b.status_fifo,
       isDraft: Boolean(b.is_gantung),
+      // Ditinjau SPV/QA — hanya ada pada modul yang kapasitasnya soft cap
+      // (Prepast, Transfer); undefined pada modul lain jadi otomatis false.
+      melampauiKapasitas: Boolean(b.melampaui_kapasitas),
       komentarPenolakan: b.rejection_comment,
       operatorNama: b.operator_nama,
       ...tindakan(b, aktor),
@@ -477,7 +483,7 @@ export async function detail(modul, id) {
        WHERE r.id = ?`,
     prepast: `
       SELECT p.kode, p.status_approval, p.jenis_batch, p.prepast_start, p.prepast_finish,
-             p.vol_prepast_ltr, p.qty_remaining_ltr, p.flowrate_pst,
+             p.vol_prepast_ltr, p.qty_remaining_ltr, p.melampaui_kapasitas, p.flowrate_pst,
              p.temp_after_heater, p.temp_output_prd, p.nilai_ts, p.is_gantung,
              p.remarks, p.rejection_comment, p.created_at, p.updated_at,
              COALESCE(sup.supplier_name, 'Tidak diketahui') AS supplier_name,
@@ -546,6 +552,7 @@ export async function detail(modul, id) {
       ['Flowrate', num(r.flowrate_pst, 1)], ['Temp after heater (°C)', num(r.temp_after_heater, 1)],
       ['Temp output (°C)', num(r.temp_output_prd, 1)], ['Nilai TS', num(r.nilai_ts, 1)],
       ['Menggantung', r.is_gantung ? 'Ya - belum lengkap' : 'Tidak'],
+      ['Kapasitas tujuan', r.melampaui_kapasitas ? 'Melebihi batas keras silo tujuan' : null],
       ['Catatan', r.remarks],
     ],
     pengembalian: [

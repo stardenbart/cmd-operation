@@ -117,20 +117,22 @@ describe('BR-03 — konversi kg ke liter memakai FLOOR', () => {
 });
 
 describe('BR-06 & BR-24 — kapasitas silo dan toleransinya', () => {
-  test('menolak prepast yang melewati batas keras', async () => {
+  test('menerima tapi menandai prepast yang melewati batas keras', async () => {
     // SILO6 berkapasitas 3.000 L dengan toleransi 1.000 L, jadi batas
-    // kerasnya 4.000 L. 4.001 L harus ditolak.
+    // kerasnya 4.000 L. Kapasitas tidak lagi memblokir Prepast (keputusan
+    // operasional, sama seperti Pindah Silo) — 4.001 L tetap tersimpan,
+    // hanya ditandai untuk ditinjau.
     const rcv = await terima(6000, 1);
 
-    await assert.rejects(
-      () => prepastKe(rcv.id, [{ siloId: SILO.enam, volumeLtr: 4001 }]),
-      (err) => {
-        // Kapasitas per silo tujuan dilaporkan sebagai FR-29.7; BR-24 adalah
-        // aturan yang menetapkan bahwa batas kerasnya nominal + toleransi.
-        assert.equal(err.code, 'FR-29.7');
-        return true;
-      },
-    );
+    const hasil = await prepastKe(rcv.id, [{ siloId: SILO.enam, volumeLtr: 4001 }]);
+    assert.equal(hasil.dibuat[0].melampauiKapasitas, true);
+    assert.equal(hasil.melampauiNominal[0].melebihiBatasKeras, true);
+
+    const silo = await volumeSilo(SILO.enam);
+    assert.equal(silo.aktual, 4001);
+    // Sudah melewati batas keras — GREATEST() meng-clamp sisanya ke 0,
+    // bukan minus.
+    assert.equal(silo.sisaSampaiBatasKeras, 0);
   });
 
   test('menerima prepast tepat pada batas keras', async () => {
@@ -154,18 +156,14 @@ describe('BR-06 & BR-24 — kapasitas silo dan toleransinya', () => {
     await prepastKe(rcv.id, [{ siloId: SILO.tiga, volumeLtr: 6500 }]);
     assert.equal((await volumeSilo(SILO.tiga)).sisaSampaiBatasKeras, 500);
 
-    // Sisa 500 saja, bukan 1.000 lagi.
-    await assert.rejects(
-      () => prepastKe(rcv.id, [{ siloId: SILO.tiga, volumeLtr: 501 }]),
-      (err) => {
-        assert.equal(err.code, 'FR-29.7');
-        return true;
-      },
-    );
+    // Sisa 500 saja, bukan 1.000 lagi — 501 L HARUS ditandai melampaui
+    // batas keras (bukan diterima mentah-mentah seolah toleransi masih
+    // utuh 1.000), tapi tetap tersimpan (kapasitas tidak lagi memblokir).
+    const hasil = await prepastKe(rcv.id, [{ siloId: SILO.tiga, volumeLtr: 501 }]);
+    assert.equal(hasil.dibuat[0].melampauiKapasitas, true);
 
-    await prepastKe(rcv.id, [{ siloId: SILO.tiga, volumeLtr: 500 }]);
     const akhir = await volumeSilo(SILO.tiga);
-    assert.equal(akhir.aktual, 7000);
+    assert.equal(akhir.aktual, 7001);
     assert.equal(akhir.sisaSampaiBatasKeras, 0);
   });
 

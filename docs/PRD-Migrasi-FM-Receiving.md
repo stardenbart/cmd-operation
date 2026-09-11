@@ -378,7 +378,7 @@ Notasi: **P0** wajib untuk go-live · **P1** penting · **P2** nice to have.
 | FR-6.11 | Anchor silo tujuan: diwariskan dari silo asal bila transfer penuh, `Now()` bila sebagian — hanya diterapkan bila anchor tujuan masih kosong. | P0 |
 | FR-6.12 | Koreksi menjalankan reversal penuh sebelum entri baru (lihat 2.7); reversal harus idempoten. | P0 |
 | FR-6.13 | Toggle GANTUNG tersedia; pelengkapan memperbarui `trf_time` dan `standing_time_menit` in-place. | P0 |
-| FR-6.14 | **PINDAH SILO — kapasitas silo tujuan jadi soft cap.** Volume yang melampaui kapasitas nominal, bahkan batas keras (kapasitas + toleransi), TETAP tersimpan apa adanya — tidak ditolak. Kapasitas nominal murni informasi/peringatan (`melampauiNominalTujuan` pada response, badge peringatan di form sebelum submit). Setiap transfer yang melampaui batas keras dicatat `melampaui_kapasitas = TRUE` (migrasi 027) agar tetap dapat ditinjau/difilter SPV & QA di Data List. **Prepast (FR-29.7) TIDAK ikut berubah** — batas kerasnya tetap ditegakkan keras di sana. | P0 |
+| FR-6.14 | **PINDAH SILO — kapasitas silo tujuan jadi soft cap.** Volume yang melampaui kapasitas nominal, bahkan batas keras (kapasitas + toleransi), TETAP tersimpan apa adanya — tidak ditolak. Kapasitas nominal murni informasi/peringatan (`melampauiNominalTujuan` pada response, badge peringatan di form sebelum submit). Setiap transfer yang melampaui batas keras dicatat `melampaui_kapasitas = TRUE` (migrasi 027) agar tetap dapat ditinjau/difilter SPV & QA di Data List. **Prepast (FR-29.7) ikut melunak dengan cara yang sama** sejak migrasi 030 — lihat FR-29.7. | P0 |
 
 ### FR-7 Modul Monitoring
 
@@ -882,7 +882,7 @@ Aplikasi sekarang memaksa operator **mengisi form yang sama berulang kali**, sat
 | FR-29.4 | Tombol **"Sisakan ke baris ini"** mengisi baris terakhir dengan seluruh sisa — kasus paling umum, satu ketukan | P0 |
 | FR-29.5 | Silo yang sudah dipilih tidak muncul lagi di baris berikutnya — `SILO25A/25A` menjadi mustahil (memperbaiki B-18) | P0 |
 | FR-29.6 | Simpan menghasilkan N record prepast dalam **satu transaksi**; bila satu gagal, tidak ada yang tersimpan | P0 |
-| FR-29.7 | Volume per baris tidak boleh melebihi kapasitas tersisa silo tujuannya masing-masing | P0 |
+| FR-29.7 | **Kapasitas silo tujuan jadi soft cap (sejak migrasi 030, September 2026, sama seperti PINDAH SILO — FR-6.14).** Volume per baris yang melampaui kapasitas nominal, bahkan batas keras (kapasitas + toleransi), TETAP tersimpan apa adanya — tidak ditolak. Kapasitas nominal murni informasi/peringatan (`melampauiNominal` pada response, badge peringatan di form sebelum submit). Baris yang melampaui batas keras dicatat `melampaui_kapasitas = TRUE` agar tetap dapat ditinjau/difilter SPV & QA di Data List. | P0 |
 | FR-29.8 | `StandingTimeAnchor` diperbarui untuk setiap silo tujuan yang anchor-nya masih kosong (BR-09, berlaku per baris) | P0 |
 | FR-29.9 | Koreksi atas prepast multi-silo menampilkan seluruh barisnya kembali sebagai satu kesatuan, bukan sebagai record terpisah | P1 |
 | FR-29.10 | Silo tujuan boleh kosong saat penyimpanan awal. Record tetap menyimpan volume sebagai GANTUNG, muncul di **Perlu dilengkapi**, belum masuk stok silo/FIFO, dan kapasitas diperiksa saat silo dilengkapi | P0 |
