@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api.js';
 import {
@@ -61,6 +61,11 @@ export default function Prepast() {
     mutationFn: (body) => api.post('/prepast', body),
     onSuccess: (res) => {
       const d = res.data;
+      // BR-24 — kapasitas nominal tidak lagi memblokir Prepast (keputusan
+      // operasional, sama seperti Pindah Silo): baris yang melampauinya tetap
+      // tersimpan, ini murni pemberitahuan supaya operator tahu sebelum
+      // meninggalkan form.
+      const melampaui = d.melampauiNominal ?? [];
       setSukses(
         `${d.dibuat.length} record dibuat: ${d.dibuat.map((x) => x.kode).join(', ')}. ` +
         (d.sisaBatchIndukLtr === null
@@ -68,7 +73,12 @@ export default function Prepast() {
           : `Total ${fmt(d.totalLtr)} L. Sisa batch induk ${fmt(d.sisaBatchIndukLtr)} L.`) +
         (d.gantung
           ? ` Perlu dilengkapi: ${d.fieldKosong.map((f) => f.label).join(', ')}.`
-          : ' Data proses lengkap.'),
+          : ' Data proses lengkap.') +
+        (melampaui.length > 0
+          ? ` Perhatian — ${melampaui.length} baris melebihi kapasitas nominal silo tujuan: ${
+            melampaui.map((m) => `silo id ${m.siloId} (+${fmt(m.kelebihanLtr)} L${m.melebihiBatasKeras ? ', lewat batas keras' : ''})`).join('; ')
+          }.`
+          : ''),
       );
       setBatch(null);
       setPecahan([{ siloId: '', volumeLtr: '' }]);
@@ -275,49 +285,82 @@ export default function Prepast() {
           <span className="label">Boleh lebih dari satu</span>
         </div>
 
-        {pecahan.map((p, i) => (
-          <div className="pecahan-baris" key={i}>
-            <Field label={`Silo ${i + 1}`} bantuan="Boleh dikosongkan dulu—record masuk Perlu dilengkapi">
-              <select value={p.siloId} onChange={(e) => ubahPecahan(i, 'siloId', e.target.value)}>
-                <option value="">Pilih silo</option>
-                {siloTersedia(i).map((s) => (
-                  <option key={s.silo_id} value={s.silo_id}>
-                    {s.silo_name}{tampilkanSisaSilo ? ` · sisa ${fmt(s.vol_tersedia_ltr)} L` : ''}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field
-              label="Volume (L)"
-              bantuan={sisaTidakDiketahui
-                ? 'Lengkapi Berat Jenis Receiving ini dulu di Data List, baru Volume bisa diisi'
-                : 'Boleh dikosongkan dulu—record masuk Perlu dilengkapi'}
-            >
-              <input
-                className="angka-input"
-                inputMode="decimal"
-                value={p.volumeLtr}
-                onChange={(e) => ubahPecahan(i, 'volumeLtr', e.target.value)}
-                disabled={sisaTidakDiketahui}
-              />
-            </Field>
-            {/* Spacer label kosong — bukan tombolnya langsung dalam grid —
-                supaya turun sejajar dengan kotak Silo/Volume di sebelahnya
-                (lihat catatan align-items pada .pecahan-baris di app.css). */}
-            <div className="field">
-              <span className="label">&nbsp;</span>
-              <button
-                type="button"
-                className="btn btn--bahaya btn--kecil"
-                onClick={() => setPecahan(pecahan.filter((_, idx) => idx !== i))}
-                disabled={pecahan.length === 1}
-                aria-label={`Hapus silo baris ${i + 1}`}
-              >
-                Hapus
-              </button>
-            </div>
-          </div>
-        ))}
+        {pecahan.map((p, i) => {
+          // Pratinjau kapasitas — sekadar peringatan, bukan penolakan (BR-24,
+          // keputusan operasional sama seperti Pindah Silo). Dicari langsung
+          // dari ctx.siloTujuan, bukan siloTersedia(i): silo yang sudah
+          // dipilih baris ini disingkirkan dari daftar itu untuk baris LAIN.
+          const siloPilihan = (ctx?.siloTujuan ?? [])
+            .find((s) => String(s.silo_id) === String(p.siloId));
+          const volumeDiketik = angka(p.volumeLtr);
+          const pratinjauLewatKapasitas = (siloPilihan && volumeDiketik > 0
+            && volumeDiketik > Number(siloPilihan.vol_tersedia_ltr))
+            ? {
+              sisaNominalLtr: Number(siloPilihan.vol_tersedia_ltr),
+              batasKerasLtr: Number(siloPilihan.vol_tersedia_toleransi_ltr),
+              melebihiBatasKeras: volumeDiketik > Number(siloPilihan.vol_tersedia_toleransi_ltr),
+            }
+            : null;
+
+          return (
+            <Fragment key={i}>
+              <div className="pecahan-baris">
+                <Field label={`Silo ${i + 1}`} bantuan="Boleh dikosongkan dulu—record masuk Perlu dilengkapi">
+                  <select value={p.siloId} onChange={(e) => ubahPecahan(i, 'siloId', e.target.value)}>
+                    <option value="">Pilih silo</option>
+                    {siloTersedia(i).map((s) => (
+                      <option key={s.silo_id} value={s.silo_id}>
+                        {s.silo_name}{tampilkanSisaSilo ? ` · sisa ${fmt(s.vol_tersedia_ltr)} L` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field
+                  label="Volume (L)"
+                  bantuan={sisaTidakDiketahui
+                    ? 'Lengkapi Berat Jenis Receiving ini dulu di Data List, baru Volume bisa diisi'
+                    : 'Boleh dikosongkan dulu—record masuk Perlu dilengkapi'}
+                >
+                  <input
+                    className="angka-input"
+                    inputMode="decimal"
+                    value={p.volumeLtr}
+                    onChange={(e) => ubahPecahan(i, 'volumeLtr', e.target.value)}
+                    disabled={sisaTidakDiketahui}
+                  />
+                </Field>
+                {/* Spacer label kosong — bukan tombolnya langsung dalam grid —
+                    supaya turun sejajar dengan kotak Silo/Volume di sebelahnya
+                    (lihat catatan align-items pada .pecahan-baris di app.css). */}
+                <div className="field">
+                  <span className="label">&nbsp;</span>
+                  <button
+                    type="button"
+                    className="btn btn--bahaya btn--kecil"
+                    onClick={() => setPecahan(pecahan.filter((_, idx) => idx !== i))}
+                    disabled={pecahan.length === 1}
+                    aria-label={`Hapus silo baris ${i + 1}`}
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+
+              {pratinjauLewatKapasitas && (
+                // Kapasitas nominal tidak lagi memblokir Prepast (keputusan
+                // operasional) — ini murni peringatan supaya operator sadar
+                // sebelum submit, bukan penolakan. Baris tetap dapat disimpan.
+                <div className="pesan pesan--waspada">
+                  Volume {fmt(volumeDiketik)} L melebihi sisa nominal {siloPilihan.silo_name}
+                  {' '}({fmt(pratinjauLewatKapasitas.sisaNominalLtr)} L).
+                  {pratinjauLewatKapasitas.melebihiBatasKeras
+                    ? ` Bahkan melewati batas keras (${fmt(pratinjauLewatKapasitas.batasKerasLtr)} L) — tetap dapat disimpan, tercatat sebagai pengecualian.`
+                    : ' Masih dalam toleransi — akan tercatat sebagai pengecualian nominal.'}
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
 
         <div className="baris">
           <button

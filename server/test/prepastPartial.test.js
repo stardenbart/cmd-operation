@@ -249,7 +249,10 @@ describe('Prepast parsial', () => {
     assert.equal((await dataList.gantung(AKTOR.operator)).data.length, 0);
   });
 
-  test('kapasitas silo diperiksa ketika silo tujuan dilengkapi', async () => {
+  test('kapasitas silo dibandingkan ketika silo tujuan dilengkapi — tetap tersimpan, ditandai', async () => {
+    // BR-24, keputusan operasional September 2026: kapasitas TIDAK LAGI
+    // memblokir Prepast (sama seperti Pindah Silo) — hanya menandai
+    // melampaui_kapasitas untuk ditinjau, bukan menolak pelengkapan.
     const rcv = await receiving.buat(
       { supplierId: 1, qtyKg: 7000, beratJenis: 1, nilaiTs: 12.4, finishTime: T(6) },
       AKTOR.operator,
@@ -270,17 +273,16 @@ describe('Prepast parsial', () => {
     );
     const id = hasil.dibuat[0].id;
 
-    await assert.rejects(
-      () => prepast.lengkapiDraft(id, { siloId: SILO }, AKTOR.operator, IP_UJI),
-      (err) => err.code === 'FR-29.7',
-    );
+    const dilengkapi = await prepast.lengkapiDraft(id, { siloId: SILO }, AKTOR.operator, IP_UJI);
+    assert.equal(dilengkapi.melampauiKapasitas, true);
 
     const [[baris]] = await pool.query(
-      'SELECT silo_tujuan_id, is_gantung FROM prepast_record WHERE id = ?',
+      'SELECT silo_tujuan_id, is_gantung, melampaui_kapasitas FROM prepast_record WHERE id = ?',
       [id],
     );
-    assert.equal(baris.silo_tujuan_id, null);
-    assert.equal(Boolean(baris.is_gantung), true);
+    assert.equal(baris.silo_tujuan_id, SILO);
+    assert.equal(Boolean(baris.is_gantung), false);
+    assert.equal(Boolean(baris.melampaui_kapasitas), true);
   });
 
   test('nilai yang sudah diisi tetap tersimpan dan field kosong ditagih Dashboard', async () => {

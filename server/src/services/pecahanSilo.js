@@ -41,7 +41,13 @@ const dariSkala = (u) => u / SKALA;
  *   Jenis, jadi volume liternya belum dapat dihitung sama sekali. Ini beda
  *   dari "habis" (0): batch belum tentu habis, hanya belum bisa diukur.
  * @param {Map<number, number>} kapasitasTersisa  siloId → liter tersedia
- * @returns {{totalLtr: number, sisaTakTeralokasi: number|null, pecahan: Pecahan[]}}
+ * @param {Map<number, number>|null} sisaBatasKeras  siloId → liter tersedia
+ *   sampai batas keras (kapasitas + toleransi). Melebihi batas keras TIDAK
+ *   LAGI ditolak (keputusan operasional, September 2026, sama seperti
+ *   Pindah Silo) — hanya ditandai `melebihiBatasKeras` pada baris yang
+ *   bersangkutan, supaya kelebihan itu tetap terlihat untuk ditinjau.
+ * @returns {{totalLtr: number, sisaTakTeralokasi: number|null, pecahan: Pecahan[],
+ *   melampauiNominal: object[]}}
  */
 export { PecahanError };
 
@@ -89,6 +95,11 @@ export function validasiPecahan(
 
   let total = 0;
   const melampauiNominal = [];
+  // siloId → true bila baris itu melampaui bahkan batas keras. Dipakai untuk
+  // menandai `melebihiBatasKeras` pada tiap baris hasil di bawah, tanpa
+  // mencari-cari lagi di dalam melampauiNominal (yang hanya berisi baris
+  // yang punya volume — baris silo-tanpa-volume tidak pernah masuk situ).
+  const batasKerasTerlampaui = new Map();
 
   for (const p of pecahan) {
     if (p.siloId != null && !kapasitasTersisa.has(p.siloId)) {
@@ -134,11 +145,18 @@ export function validasiPecahan(
       continue;
     }
 
-    // FR-29.7 — tiap baris dibatasi kapasitas silo tujuannya masing-masing.
+    // FR-29.7 — tiap baris dibandingkan dengan kapasitas silo tujuannya
+    // masing-masing. Sekadar informasi/peringatan, BUKAN pembatas input.
     //
-    // BR-24: batas KERAS adalah kapasitas nominal ditambah toleransi. Volume
-    // di antara keduanya diterima tetapi ditandai, sehingga kelebihan yang
-    // sah tetap terlihat di dashboard alih-alih lewat tanpa jejak.
+    // BR-24: batas KERAS adalah kapasitas nominal ditambah toleransi.
+    //
+    // KEPUTUSAN OPERASIONAL (dikonfirmasi pengguna, September 2026): batas
+    // keras TIDAK LAGI memblokir Prepast — sama seperti Pindah Silo. Silo
+    // produksi kadang perlu menampung lebih dari angka nominalnya, dan
+    // penolakan keras di titik ini pernah membuat operator terhambat
+    // mencatat susu yang secara fisik sudah ada di silo. Volume yang
+    // melampaui bahkan batas keras tetap disimpan, hanya ditandai
+    // `melebihiBatasKeras` supaya SPV/QA dapat meninjaunya lewat Data List.
     const sisaNominal = keSkala(kapasitasTersisa.get(p.siloId));
 
     // Batas keras dibaca LANGSUNG, tidak dijumlahkan dari sisa nominal.
@@ -152,18 +170,9 @@ export function validasiPecahan(
       ? keSkala(sisaBatasKeras.get(p.siloId))
       : sisaNominal;
 
-    if (volume > batasKeras) {
-      throw new PecahanError(
-        'FR-29.7',
-        `Volume ${p.volumeLtr} L melebihi kapasitas silo id ${p.siloId} ` +
-          `(sisa nominal ${dariSkala(sisaNominal)} L, batas keras ` +
-          `${dariSkala(batasKeras)} L)`,
-        {
-          siloId: p.siloId,
-          sisaNominalLtr: dariSkala(sisaNominal),
-          batasKerasLtr: dariSkala(batasKeras),
-        },
-      );
+    const melebihiBatasKeras = volume > batasKeras;
+    if (melebihiBatasKeras) {
+      batasKerasTerlampaui.set(p.siloId, true);
     }
 
     if (volume > sisaNominal) {
@@ -172,6 +181,8 @@ export function validasiPecahan(
         volumeLtr: p.volumeLtr,
         sisaNominalLtr: dariSkala(sisaNominal),
         kelebihanLtr: dariSkala(volume - sisaNominal),
+        melebihiBatasKeras,
+        batasKerasLtr: dariSkala(batasKeras),
       });
     }
 
@@ -195,9 +206,12 @@ export function validasiPecahan(
     pecahan: pecahan.map((p) => ({
       siloId: p.siloId ?? null,
       volumeLtr: p.volumeLtr == null || p.volumeLtr === '' ? null : p.volumeLtr,
+      melebihiBatasKeras: batasKerasTerlampaui.get(p.siloId) ?? false,
     })),
-    // Baris yang isinya melampaui kapasitas nominal namun masih di dalam
-    // toleransi (BR-24). Kosong berarti seluruhnya di dalam nominal.
+    // Baris yang isinya melampaui kapasitas nominal (BR-24) — baik yang
+    // masih di dalam toleransi maupun yang sudah melewati batas keras
+    // (lihat `melebihiBatasKeras` tiap entri). Kosong berarti seluruhnya
+    // di dalam nominal.
     melampauiNominal,
   };
 }

@@ -66,7 +66,8 @@ export async function antreanBuffer() {
 export async function siloTujuan() {
   const [baris] = await pool.query(
     `SELECT silo_id, kode, silo_name, kapasitas_maks_ltr,
-            vol_aktual_ltr, vol_tersedia_ltr, standing_time_anchor
+            vol_aktual_ltr, vol_tersedia_ltr, vol_tersedia_toleransi_ltr,
+            standing_time_anchor
        FROM v_silo_volume
       WHERE is_buffer = FALSE
       ORDER BY urutan`,
@@ -256,17 +257,17 @@ export async function buat(masukan, aktor, ip) {
       const [hasil] = await conn.query(
         `INSERT INTO prepast_record
            (kode, receiving_id, supplier_id, silo_tujuan_id,
-            vol_prepast_ltr, qty_remaining_ltr,
+            vol_prepast_ltr, qty_remaining_ltr, melampaui_kapasitas,
             prepast_start, prepast_finish, continuity_previous_id,
             continuity_override, continuity_override_reason, flowrate_pst,
             temp_after_heater, temp_output_prd, nilai_ts,
             operator_id, status_approval, status_fifo, cmd_source,
             is_gantung, remarks)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                  'Pending Approval', 'ACTIVE', 'CMD1', ?, ?)`,
         [
           kode, receivingId, induk.sup_id, p.siloId,
-          p.volumeLtr, p.volumeLtr,
+          p.volumeLtr, p.volumeLtr, p.melebihiBatasKeras,
           prepastStart,
           finishFinal,
           kontinuitas.tersambung ? kontinuitas.sebelumnya?.id ?? null : null,
@@ -295,6 +296,7 @@ export async function buat(masukan, aktor, ip) {
         kontinu: kontinuitas.tersambung,
         continuityPreviousId: kontinuitas.tersambung ? kontinuitas.sebelumnya?.id ?? null : null,
         continuityOverride: false,
+        melampauiKapasitas: p.melebihiBatasKeras,
       });
     }
 
@@ -409,6 +411,9 @@ function bentukKonteksKelengkapan(record) {
     continuityPreviousId: record.continuity_previous_id,
     isGantung: kelengkapan.isGantung,
     fieldKosong: kelengkapan.fieldKosong,
+    // BR-24 — TRUE bila volume ini tercatat melampaui batas keras
+    // (kapasitas + toleransi) silo tujuan. Sekadar penanda untuk ditinjau.
+    melampauiKapasitas: Boolean(record.melampaui_kapasitas),
   };
 }
 
@@ -540,14 +545,21 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       batasKeras = new Map(kapasitasBaris.map((s) => [s.silo_id, Number(s.vol_tersedia_toleransi_ltr)]));
     }
 
+    // BR-24 — TRUE bila volume ini melampaui bahkan batas keras (kapasitas +
+    // toleransi) silo tujuan. Sekadar penanda untuk ditinjau, bukan penolakan
+    // (lihat pecahanSilo.js). Bila silo/volume TIDAK ikut berubah pada
+    // pelengkapan ini (mis. hanya mengisi flowrate), nilai lama dipertahankan
+    // apa adanya — bukan direset ke false begitu saja.
+    let melampauiKapasitas = Boolean(lama.melampaui_kapasitas);
     if (volumeLtr != null && (siloDitambahkan || volumeDitambahkan)) {
       try {
-        validasiPecahan(
+        const hasilValidasi = validasiPecahan(
           [{ siloId: siloId == null ? null : Number(siloId), volumeLtr: Number(volumeLtr) }],
           volumeDitambahkan ? Number(induk.qty_remaining_ltr) : Number(volumeLtr),
           kapasitas,
           batasKeras,
         );
+        melampauiKapasitas = hasilValidasi.pecahan[0].melebihiBatasKeras;
       } catch (err) {
         throw new BusinessError(err.kode ?? 'VALIDATION_ERROR', err.message, err.detail ?? null);
       }
@@ -626,6 +638,7 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
     await conn.query(
       `UPDATE prepast_record
           SET silo_tujuan_id = ?, vol_prepast_ltr = ?, qty_remaining_ltr = ?,
+              melampaui_kapasitas = ?,
               prepast_start = ?, prepast_finish = ?, flowrate_pst = ?,
               temp_after_heater = ?, temp_output_prd = ?, is_gantung = ?,
               continuity_previous_id = ?, continuity_override = FALSE,
@@ -635,6 +648,7 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
         siloId,
         volumeLtr,
         volumeDitambahkan ? volumeLtr : lama.qty_remaining_ltr,
+        melampauiKapasitas,
         prepastStart, finishFinal, flowrate, tempAfterHeater, tempOutput,
         kelengkapan.isGantung,
         continuityPreviousIdBaru,
@@ -750,17 +764,17 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
         const [hasilInsert] = await conn.query(
           `INSERT INTO prepast_record
              (kode, receiving_id, supplier_id, silo_tujuan_id,
-              vol_prepast_ltr, qty_remaining_ltr,
+              vol_prepast_ltr, qty_remaining_ltr, melampaui_kapasitas,
               prepast_start, prepast_finish, continuity_previous_id,
               continuity_override, continuity_override_reason, flowrate_pst,
               temp_after_heater, temp_output_prd, nilai_ts,
               operator_id, status_approval, status_fifo, cmd_source,
               is_gantung, remarks)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                    'Pending Approval', 'ACTIVE', 'CMD1', ?, ?)`,
           [
             kodeBaru, lama.receiving_id, lama.supplier_id, p.siloId,
-            p.volumeLtr, p.volumeLtr,
+            p.volumeLtr, p.volumeLtr, p.melebihiBatasKeras,
             prepastStart, finishFinal,
             continuityPreviousIdBaru,
             false, null,
@@ -784,6 +798,7 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
         const recordBaru = {
           id: hasilInsert.insertId, kode: kodeBaru, siloId: p.siloId, volumeLtr: p.volumeLtr,
           isGantung: kelengkapanBaris.isGantung, fieldKosong: kelengkapanBaris.fieldKosong,
+          melampauiKapasitas: p.melebihiBatasKeras,
         };
         dibuatTambahan.push(recordBaru);
 

@@ -4,8 +4,12 @@
  * Keputusan operasional (dikonfirmasi pengguna, September 2026): operator
  * produksi sempat terhambat mencatat susu yang secara fisik sudah ada di
  * silo karena sistem menolak keras begitu kapasitas+toleransi terlampaui.
- * Untuk Pindah Silo, kapasitas nominal sekarang murni peringatan — Prepast
- * (pecahanSilo.js) TIDAK ikut berubah, batas kerasnya tetap ditegakkan.
+ * Untuk Pindah Silo, kapasitas nominal sekarang murni peringatan.
+ *
+ * Prepast (pecahanSilo.js) awalnya SENGAJA tidak ikut berubah pada putaran
+ * pertama keputusan ini — lihat riwayat git. Keputusan itu kemudian dibalik:
+ * Prepast sekarang ikut melunak dengan cara yang sama persis (lihat
+ * prepastKapasitasSoftCap.test.js).
  */
 
 import { test, describe, before, beforeEach, after } from 'node:test';
@@ -106,24 +110,24 @@ describe('Transfer Pindah Silo — kapasitas nominal jadi soft cap', () => {
     assert.equal(await volumeSilo(SILO.dua), 5500);
   });
 
-  test('Prepast TIDAK ikut melunak — batas keras tetap ditegakkan', async () => {
+  test('Prepast ikut melunak dengan cara yang sama — lihat prepastKapasitasSoftCap.test.js', async () => {
     const rcv = await receiving.buat(
       { supplierId: 1, qtyKg: 6001, beratJenis: 1, nilaiTs: 12.4, finishTime: W(6) },
       AKTOR.operator, IP_UJI,
     );
 
-    await assert.rejects(
-      () => prepast.buat(
-        {
-          receivingId: rcv.id,
-          pecahan: [{ siloId: SILO.satu, volumeLtr: 6001 }],
-          prepastStart: W(7), prepastFinish: W(8),
-          flowrate: 5.5, tempAfterHeater: 86, tempOutput: 4,
-        },
-        AKTOR.operator, IP_UJI,
-      ),
-      (err) => err.code === 'FR-29.7',
+    const hasil = await prepast.buat(
+      {
+        receivingId: rcv.id,
+        pecahan: [{ siloId: SILO.satu, volumeLtr: 6001 }],
+        prepastStart: W(7), prepastFinish: W(8),
+        flowrate: 5.5, tempAfterHeater: 86, tempOutput: 4,
+      },
+      AKTOR.operator, IP_UJI,
     );
+
+    assert.equal(hasil.dibuat[0].melampauiKapasitas, true);
+    assert.equal(await volumeSilo(SILO.satu), 6001);
   });
 
   test('melampaui_kapasitas tersimpan dan dapat difilter lewat Data List', async () => {
