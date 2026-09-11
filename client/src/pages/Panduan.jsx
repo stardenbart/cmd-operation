@@ -103,7 +103,7 @@ const BAB = [
       sub(
         'Perlu dilengkapi & batch aktif',
         ul(
-          'Kartu "Perlu dilengkapi" menagih input yang masih separuh (prepast atau transfer yang belum diisi waktunya). Klik salah satunya untuk langsung membukanya dan melengkapi. Kalau kosong, berarti semua catatan sudah lengkap.',
+          'Kartu "Perlu dilengkapi" menagih input yang masih separuh, termasuk silo tujuan atau hasil proses Prepast yang belum diisi. Klik salah satunya untuk langsung membukanya dan melengkapi. Kalau kosong, berarti semua catatan sudah lengkap.',
           'Tabel "Batch aktif per silo" di bawah memperlihatkan susu siapa yang masih tersimpan di tiap silo, berapa TS-nya, dan sudah berapa lama berdiri, lengkap dengan subtotal per silo.',
         ),
         p('Angka menyegar sendiri tiap 30 detik tanpa memuat ulang halaman, jadi yang Anda lihat selalu terbaru.'),

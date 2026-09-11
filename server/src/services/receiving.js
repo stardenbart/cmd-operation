@@ -9,6 +9,7 @@ import { pool, withTransaction } from '../db/pool.js';
 import { hitungQtyLtr } from './konversi.js';
 import { terbitkanId } from './idGenerator.js';
 import { catatAudit } from './audit.js';
+import { statusKelengkapanReceiving } from './receivingGantung.js';
 import { BusinessError, NotFoundError, ForbiddenError } from '../middleware/errors.js';
 
 const STATUS_DIABAIKAN = ['Rejected', 'REVISED', 'VOIDED'];
@@ -55,8 +56,10 @@ export async function buat({ supplierId, qtyKg, beratJenis, nilaiTs, finishTime,
     );
     if (!supplier[0]) throw new NotFoundError('Supplier');
 
-    // BR-03 — pembulatan ke bawah, terverifikasi terhadap 168 baris nyata
-    const qtyLtr = hitungQtyLtr(qtyKg, beratJenis);
+    // BR-03 — volume baru dapat dihitung setelah Berat Jenis tersedia.
+    // Selama BJ kosong, NULL menjaga agar receiving belum masuk stok buffer.
+    const qtyLtr = beratJenis == null ? null : hitungQtyLtr(qtyKg, beratJenis);
+    const kelengkapan = statusKelengkapanReceiving({ beratJenis, nilaiTs });
 
     const kode = await terbitkanId(conn, 'RCV');
 
@@ -64,12 +67,13 @@ export async function buat({ supplierId, qtyKg, beratJenis, nilaiTs, finishTime,
       `INSERT INTO receiving
          (kode, supplier_id, silo_id, qty_kg, berat_jenis, qty_ltr,
           qty_remaining_ltr, nilai_ts, finish_time, operator_id,
-          status_approval, status_fifo, buffer_status, cmd_source, remarks)
+          status_approval, status_fifo, buffer_status, cmd_source, is_gantung, remarks)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               'Pending Approval', 'ACTIVE', 'IN_BUFFER', 'CMD1', ?)`,
+               'Pending Approval', 'ACTIVE', 'IN_BUFFER', 'CMD1', ?, ?)`,
       [
-        kode, supplierId, buffer.id, qtyKg, beratJenis, qtyLtr,
-        qtyLtr, nilaiTs ?? null, finishTime, aktor.id, remarks ?? null,
+        kode, supplierId, buffer.id, qtyKg, beratJenis ?? null, qtyLtr,
+        qtyLtr, nilaiTs ?? null, finishTime, aktor.id,
+        kelengkapan.isGantung, remarks ?? null,
       ],
     );
 
@@ -105,6 +109,149 @@ export async function ambil(id) {
   const record = await ambilSatu(pool, id);
   if (!record) throw new NotFoundError('Penerimaan');
   return record;
+}
+
+function pastikanBolehLengkapi(lama, aktor) {
+  if (!lama.is_gantung) {
+    throw new BusinessError('BUKAN_DRAFT', 'Receiving ini sudah lengkap. Gunakan koreksi.');
+  }
+  if (!['Pending Approval', 'Rejected'].includes(lama.status_approval)) {
+    throw new BusinessError(
+      'BR-19',
+      `${lama.kode} berstatus ${lama.status_approval} dan tidak dapat dilengkapi`,
+    );
+  }
+  const milikSendiri = Number(lama.operator_id) === Number(aktor.id);
+  if (aktor.role !== 'SPV' && !milikSendiri) {
+    throw new ForbiddenError('Operator hanya dapat melengkapi Receiving miliknya sendiri.');
+  }
+}
+
+function bentukKonteksKelengkapan(record) {
+  const kelengkapan = statusKelengkapanReceiving({
+    beratJenis: record.berat_jenis,
+    nilaiTs: record.nilai_ts,
+  });
+  return {
+    id: record.id,
+    kode: record.kode,
+    qtyKg: record.qty_kg,
+    beratJenis: record.berat_jenis,
+    nilaiTs: record.nilai_ts,
+    qtyLtr: record.qty_ltr,
+    isGantung: kelengkapan.isGantung,
+    fieldKosong: kelengkapan.fieldKosong,
+  };
+}
+
+export async function konteksPelengkapan(id, aktor) {
+  const record = await ambilSatu(pool, id);
+  if (!record) throw new NotFoundError('Penerimaan');
+  pastikanBolehLengkapi(record, aktor);
+  return bentukKonteksKelengkapan(record);
+}
+
+/** Melengkapi BJ/TS tanpa menimpa nilai yang sudah tercatat. */
+export async function lengkapiDraft(id, perubahan, aktor, ip) {
+  return withTransaction(async (conn) => {
+    const [baris] = await conn.query(
+      'SELECT * FROM receiving WHERE id = ? FOR UPDATE',
+      [id],
+    );
+    const lama = baris[0];
+    if (!lama) throw new NotFoundError('Penerimaan');
+    pastikanBolehLengkapi(lama, aktor);
+
+    if (lama.berat_jenis != null
+      && perubahan.beratJenis !== undefined
+      && Number(perubahan.beratJenis) !== Number(lama.berat_jenis)) {
+      throw new BusinessError(
+        'BERAT_JENIS_ALREADY_SET',
+        'Berat Jenis yang sudah tersimpan tidak dapat diganti lewat pelengkapan. Gunakan koreksi.',
+      );
+    }
+    if (lama.nilai_ts != null
+      && perubahan.nilaiTs !== undefined
+      && Number(perubahan.nilaiTs) !== Number(lama.nilai_ts)) {
+      throw new BusinessError(
+        'TOTAL_SOLID_ALREADY_SET',
+        'Total Solid yang sudah tersimpan tidak dapat diganti lewat pelengkapan. Gunakan koreksi.',
+      );
+    }
+
+    const beratJenis = perubahan.beratJenis
+      ?? (lama.berat_jenis == null ? null : Number(lama.berat_jenis));
+    const nilaiTs = perubahan.nilaiTs
+      ?? (lama.nilai_ts == null ? null : Number(lama.nilai_ts));
+    const beratJenisDitambahkan = lama.berat_jenis == null && beratJenis != null;
+    const totalSolidDitambahkan = lama.nilai_ts == null && nilaiTs != null;
+    const qtyLtr = beratJenis == null
+      ? null
+      : (lama.qty_ltr == null ? hitungQtyLtr(Number(lama.qty_kg), Number(beratJenis)) : Number(lama.qty_ltr));
+
+    if (beratJenisDitambahkan) {
+      // Prepast turunan boleh sudah dibuat SELAMA Berat Jenis masih kosong —
+      // itu justru alur yang didukung (Volume Prepast-nya dipaksa gantung
+      // karena sisa batch belum diketahui, lihat validasiPecahan). Yang
+      // benar-benar berbahaya hanya turunan yang SUDAH mempunyai volume
+      // nyata: itu berarti stok sudah terlanjur dihitung terhadap sisa yang
+      // belum pernah ada, dan tidak boleh terjadi lewat jalur normal — kalau
+      // sampai terjadi, Berat Jenis tidak boleh dilengkapi tanpa penelusuran
+      // manual.
+      const [[{ jumlahAnak }]] = await conn.query(
+        `SELECT COUNT(*) AS jumlahAnak
+           FROM prepast_record
+          WHERE receiving_id = ?
+            AND status_approval NOT IN ('Rejected', 'REVISED', 'VOIDED')
+            AND vol_prepast_ltr IS NOT NULL`,
+        [id],
+      );
+      if (Number(jumlahAnak) > 0) {
+        throw new BusinessError(
+          'BR-15',
+          'Berat Jenis tidak dapat dilengkapi karena Receiving sudah mempunyai Prepast ' +
+            'turunan dengan volume yang sudah terisi.',
+        );
+      }
+    }
+
+    const kelengkapan = statusKelengkapanReceiving({ beratJenis, nilaiTs });
+    await conn.query(
+      `UPDATE receiving
+          SET berat_jenis = ?, qty_ltr = ?, qty_remaining_ltr = ?, nilai_ts = ?,
+              is_gantung = ?
+        WHERE id = ?`,
+      [
+        beratJenis,
+        qtyLtr,
+        beratJenisDitambahkan ? qtyLtr : lama.qty_remaining_ltr,
+        nilaiTs,
+        kelengkapan.isGantung,
+        id,
+      ],
+    );
+
+    // Prepast dapat berjalan ketika TS Receiving masih menunggu hasil lab.
+    // Saat hasilnya masuk, isi hanya turunan yang masih NULL agar nilai yang
+    // sudah tercatat tidak pernah tertimpa.
+    if (totalSolidDitambahkan) {
+      await conn.query(
+        `UPDATE prepast_record
+            SET nilai_ts = ?
+          WHERE receiving_id = ?
+            AND nilai_ts IS NULL
+            AND status_approval NOT IN ('REVISED', 'VOIDED')`,
+        [nilaiTs, id],
+      );
+    }
+
+    const baru = await ambilSatu(conn, id);
+    await catatAudit(conn, {
+      entity: 'receiving', entityId: id, action: 'COMPLETE_DRAFT',
+      actorId: aktor.id, before: lama, after: baru, ip,
+    });
+    return bentukKonteksKelengkapan(baru);
+  });
 }
 
 /** Daftar berpaginasi (FR-10.9) — menggantikan pemuatan seluruh tabel ke klien. */
@@ -149,9 +296,10 @@ export async function daftar({ halaman = 1, perHalaman = 25, status, supplierId,
  */
 export async function dependensi(id) {
   const [anak] = await pool.query(
-    `SELECT p.id, p.kode, p.vol_prepast_ltr, p.status_approval, s.silo_name
+    `SELECT p.id, p.kode, p.vol_prepast_ltr, p.status_approval,
+            COALESCE(s.silo_name, 'Belum ditentukan') AS silo_name
        FROM prepast_record p
-       JOIN silo s ON s.id = p.silo_tujuan_id
+       LEFT JOIN silo s ON s.id = p.silo_tujuan_id
       WHERE p.receiving_id = ?
         AND p.status_approval NOT IN (?, ?, ?)
       ORDER BY p.prepast_finish ASC, p.id ASC`,
@@ -172,6 +320,13 @@ export async function koreksi(id, perubahan, alasan, aktor, ip) {
     const [baris] = await conn.query('SELECT * FROM receiving WHERE id = ? FOR UPDATE', [id]);
     const lama = baris[0];
     if (!lama) throw new NotFoundError('Penerimaan');
+
+    if (lama.is_gantung) {
+      throw new BusinessError(
+        'DRAFT_USE_COMPLETE',
+        'Receiving belum lengkap. Gunakan tindakan Lengkapi, bukan koreksi.',
+      );
+    }
 
     const anak = await dependensi(id);
     if (anak.length > 0) {

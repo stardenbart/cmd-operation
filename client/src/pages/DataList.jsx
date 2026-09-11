@@ -5,6 +5,7 @@ import { api } from '../lib/api.js';
 import { fmt, waktuSingkat, Field, Lencana, PesanGalat, PesanSukses, Kosong } from '../components/ui.jsx';
 import DialogKoreksi from '../components/DialogKoreksi.jsx';
 import DialogLengkapiPrepast from '../components/DialogLengkapiPrepast.jsx';
+import DialogLengkapiReceiving from '../components/DialogLengkapiReceiving.jsx';
 import DialogAjukanKoreksi from '../components/DialogAjukanKoreksi.jsx';
 import { PilihBanyakCari } from '../components/pilih.jsx';
 
@@ -27,6 +28,11 @@ const NADA_STATUS = {
 
 const filterKosong = {
   statusIds: [], cari: '', dariTanggal: '', sampaiTanggal: '', draftSaja: false,
+  // Hanya bermakna untuk modul receiving - lihat kartu "Menunggu Berat Jenis".
+  bjKosong: false,
+  // Hanya bermakna untuk modul transfer - Pindah Silo yang melebihi batas
+  // keras silo tujuan (BR-24 kini soft cap).
+  lewatKapasitas: false,
   // Kosong berarti SELURUH silo. Lihat catatan pada PilihBanyakCari.
   siloIds: [],
   // Filter tank/MT tujuan (banyak sekaligus) - hanya bermakna untuk transfer.
@@ -88,15 +94,19 @@ export default function DataList() {
   const [paramUrl] = useSearchParams();
   const modulAwal = paramUrl.get('modul');
   const cariAwal = paramUrl.get('cari') ?? '';
+  // Dituju kartu Dashboard "Menunggu Berat Jenis" - lihat RingkasanStok.
+  const bjKosongAwal = paramUrl.get('bjKosong') === 'true';
 
   const [modul, setModul] = useState(
     ['receiving', 'prepast', 'pengembalian', 'transfer', 'monitoring'].includes(modulAwal)
       ? modulAwal
       : 'receiving',
   );
-  const [filter, setFilter] = useState(
-    cariAwal ? { ...filterKosong, cari: cariAwal } : filterKosong,
-  );
+  const [filter, setFilter] = useState({
+    ...filterKosong,
+    ...(cariAwal ? { cari: cariAwal } : {}),
+    ...(bjKosongAwal ? { bjKosong: true } : {}),
+  });
   const [halaman, setHalaman] = useState(1);
   const [voidTarget, setVoidTarget] = useState(null);
   const [koreksiTarget, setKoreksiTarget] = useState(null);
@@ -281,7 +291,7 @@ export default function DataList() {
           </Field>
         </div>
 
-        {(modul === 'prepast' || modul === 'transfer') && (
+        {(modul === 'prepast' || modul === 'transfer' || modul === 'receiving') && (
           <label className="baris" style={{ gap: 8, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -290,6 +300,30 @@ export default function DataList() {
               onChange={setF('draftSaja')}
             />
             <span className="label">Hanya draft yang belum lengkap</span>
+          </label>
+        )}
+
+        {modul === 'receiving' && (
+          <label className="baris" style={{ gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 20, height: 20, minHeight: 20 }}
+              checked={filter.bjKosong}
+              onChange={setF('bjKosong')}
+            />
+            <span className="label">Hanya Berat Jenis kosong</span>
+          </label>
+        )}
+
+        {modul === 'transfer' && (
+          <label className="baris" style={{ gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 20, height: 20, minHeight: 20 }}
+              checked={filter.lewatKapasitas}
+              onChange={setF('lewatKapasitas')}
+            />
+            <span className="label">Hanya yang melebihi batas keras tujuan</span>
           </label>
         )}
       </div>
@@ -478,7 +512,13 @@ export default function DataList() {
 
       {koreksiTarget && (
         <div ref={panelRef}>
-          {koreksiTarget.bolehLengkapi ? (
+          {koreksiTarget.bolehLengkapi && koreksiTarget.modul === 'receiving' ? (
+            <DialogLengkapiReceiving
+              target={koreksiTarget}
+              onTutup={() => setKoreksiTarget(null)}
+              onSukses={(pesan) => { setSukses(pesan); setKoreksiTarget(null); }}
+            />
+          ) : koreksiTarget.bolehLengkapi ? (
             <DialogLengkapiPrepast
               target={koreksiTarget}
               onTutup={() => setKoreksiTarget(null)}

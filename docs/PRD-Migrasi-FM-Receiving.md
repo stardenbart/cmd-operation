@@ -315,6 +315,7 @@ Notasi: **P0** wajib untuk go-live · **P1** penting · **P2** nice to have.
 | FR-2.3 | Status monitoring: `Silo kosong` (vol=0) · `Belum pernah dicek!` · `Perlu dicek! (>N jam)` · `OK - N jam lalu`. Ambang N = **2 jam untuk SILO 25A & 25B, 4 jam untuk lainnya**. | P0 |
 | FR-2.4 | Tampilkan standing time terformat: `Xh Yj Zm` (≥1 hari) · `Yj Zm` (≥1 jam) · `Z menit`. Bila anchor kosong tampilkan `-`. | P0 |
 | FR-2.5 | Header agregat: total volume seluruh silo penyimpanan / total kapasitas (silo `000` dikecualikan dari keduanya). | P0 |
+| FR-2.5.1 | Kartu "Stok tersimpan" menampilkan total kg Receiving yang Berat Jenis-nya masih kosong (belum dapat dikonversi ke liter), hanya saat jumlahnya > 0. Berkurang otomatis begitu Berat Jenis dilengkapi (lihat FR-4.8-4.11). | P1 |
 | FR-2.6 | Navigasi modul: Receive, Prepast, Transfer, Monitor, Edit Data. Approval/Stock Opname & Export hanya untuk non-Operator. | P0 |
 | FR-2.7 | Badge hitungan: SPV melihat `List Antre Approval (n)` sebagai jumlah pending di 4 modul; Operator melihat `List Antre Prepast (n)` yaitu jumlah batch buffer siap prepast. | P0 |
 | FR-2.8 | Data ter-refresh otomatis tanpa aksi pengguna (menggantikan Timer 30 detik + tombol refresh manual). | P0 |
@@ -334,26 +335,31 @@ Notasi: **P0** wajib untuk go-live · **P1** penting · **P2** nice to have.
 | ID | Requirement | Prioritas |
 |---|---|---|
 | FR-4.1 | Silo tujuan **selalu buffer `000`** (dipaksa oleh sistem, tidak dapat dipilih operator). | P0 |
-| FR-4.2 | Field: Supplier (dropdown aktif) · Quantity kg · Berat jenis · Nilai Total Solid · Finish time (tanggal + jam + menit terpisah). Semua wajib. | P0 |
-| FR-4.3 | Tampilkan konversi live: `Qty Liter = FLOOR(qty_kg / berat_jenis)`. | P0 |
+| FR-4.2 | Field: Supplier (dropdown aktif) · Quantity kg · Berat jenis · Nilai Total Solid · Finish time (tanggal + jam + menit terpisah). Supplier, Quantity kg, dan Finish time wajib; Berat Jenis dan Nilai Total Solid boleh kosong, sendiri-sendiri maupun bersamaan. | P0 |
+| FR-4.3 | Tampilkan konversi live: `Qty Liter = FLOOR(qty_kg / berat_jenis)`. Saat Berat Jenis masih kosong, tampilkan "Belum dapat dihitung" alih-alih volume. | P0 |
 | FR-4.4 | Tampilkan kapasitas buffer tersisa = `kapasitas_maks − volume_aktual_buffer`. | P0 |
-| FR-4.5 | Validasi: seluruh field terisi · nilai numerik > 0 · menit ≤ 59 · jam & menit tepat 2 digit. Terima koma maupun titik sebagai pemisah desimal. | P0 |
-| FR-4.6 | Submit menghasilkan record: `status_approval='Pending Approval'`, `status_fifo='ACTIVE'`, `buffer_status='IN_BUFFER'`, `cmd_source='CMD1'`, `qty_remaining_ltr = qty_ltr`. | P0 |
+| FR-4.5 | Validasi: Supplier, Quantity kg, dan Finish time wajib · nilai numerik > 0 · menit ≤ 59 · jam & menit tepat 2 digit. Terima koma maupun titik sebagai pemisah desimal. | P0 |
+| FR-4.6 | Submit menghasilkan record: `status_approval='Pending Approval'`, `status_fifo='ACTIVE'`, `buffer_status='IN_BUFFER'`, `cmd_source='CMD1'`. Bila Berat Jenis terisi: `qty_ltr` dihitung dan `qty_remaining_ltr = qty_ltr`. Bila Berat Jenis kosong: `qty_ltr` dan `qty_remaining_ltr` disimpan `NULL`, volume belum masuk stok buffer. | P0 |
 | FR-4.7 | Mode koreksi: record lama menjadi `REVISED`/`CLOSED`/`qty_remaining=0`; record baru menyimpan `correction_ref` ke ID lama. Qty kg tidak dapat diubah saat koreksi. | P0 |
+| FR-4.8 | Berat Jenis dan/atau Nilai Total Solid yang kosong saat penyimpanan awal membuat record `is_gantung=TRUE`: muncul di **Perlu dilengkapi**, tidak masuk antrean approval selama masih kosong. Dilengkapi lewat `Lengkapi`, bukan koreksi; nilai yang sudah tersimpan tidak dapat ditimpa lewat jalur ini. | P0 |
+| FR-4.9 | Saat Berat Jenis dilengkapi: `qty_ltr = FLOOR(qty_kg / berat_jenis)` dihitung dan volume masuk stok buffer tepat sekali. Berat Jenis tidak dapat dilengkapi bila Receiving sudah mempunyai Prepast turunan yang **volumenya sudah terisi** (BR-15) — turunan yang masih gantung tanpa volume (lihat FR-5.1/5.4) tidak menghalangi. | P0 |
+| FR-4.10 | Saat Nilai Total Solid dilengkapi belakangan, nilainya diteruskan ke seluruh Prepast turunan yang `nilai_ts`-nya masih kosong — tanpa menimpa turunan yang sudah punya nilai sendiri. | P1 |
+| FR-4.11 | Receiving tanpa Berat Jenis tetap dapat diprepast: tampil di antrean buffer Prepast (FR-5.1) dan dapat dipilih untuk membuat Prepast draft (silo tujuan boleh dipilih, Volume wajib menyusul — FR-5.4). Batch induk tidak dikurangi maupun ditutup sampai Berat Jenis-nya diisi. | P0 |
 
 ### FR-5 Modul Prepast
 
 | ID | Requirement | Prioritas |
 |---|---|---|
-| FR-5.1 | Tampilkan antrean buffer: batch RCV di silo `000` dengan `status_fifo='ACTIVE'`, `qty_remaining_ltr > 0`, status approval tidak dikecualikan — **diurutkan menaik berdasarkan waktu penerimaan (FIFO)**. | P0 |
-| FR-5.2 | Memilih batch akan menampilkan form dengan volume default = sisa penuh batch tersebut. | P0 |
-| FR-5.3 | Field: Volume · Silo tujuan (bukan `000`) · Start & finish time · Flowrate · Temp after heater · Temp output · Remarks (opsional). | P0 |
-| FR-5.4 | Validasi: silo tujuan bukan buffer · volume > 0 · volume ≤ sisa batch induk · waktu lengkap kecuali ditandai GANTUNG · jam/menit 2 digit. | P0 |
+| FR-5.1 | Tampilkan antrean buffer: batch RCV di silo `000` dengan `status_fifo='ACTIVE'`, status approval tidak dikecualikan, dan (`qty_remaining_ltr > 0` **atau** `qty_remaining_ltr IS NULL` — Receiving yang Berat Jenis-nya belum diisi tetap tampil, ditandai "Volume belum diketahui") — **diurutkan menaik berdasarkan waktu penerimaan (FIFO)**. | P0 |
+| FR-5.2 | Memilih batch akan menampilkan form dengan volume default = sisa penuh batch tersebut, atau "belum diketahui" bila batch induk belum punya Berat Jenis. | P0 |
+| FR-5.3 | Field: Volume · Silo tujuan (bukan `000`) · Start & finish time · Flowrate · Temp after heater · Temp output · Remarks (opsional). Silo tujuan dan volume boleh belum diisi, termasuk kosong bersamaan, saat penyimpanan awal. | P0 |
+| FR-5.4 | Start wajib. Jika volume diisi: volume > 0 dan volume ≤ sisa batch induk. Silo tujuan, volume, Finish, Flowrate, dan kedua suhu yang kosong membuat record GANTUNG; silo bukan buffer dan kapasitasnya diperiksa setelah silo serta volume tersedia. **Bila sisa batch induk belum diketahui (Berat Jenis Receiving kosong), Volume WAJIB dikosongkan** — mengisi Volume pada kondisi ini ditolak (`BERAT_JENIS_BELUM_DIISI`); Silo tujuan tetap boleh dipilih. | P0 |
 | FR-5.5 | **Rollover tengah malam:** bila tanggal finish ≤ tanggal start dan jam finish < jam start, tanggal finish otomatis +1 hari. | P0 |
-| FR-5.6 | Submit mengurangi `qty_remaining_ltr` batch induk; bila mencapai 0, induk menjadi `buffer_status='COMPLETED'` + `status_fifo='CLOSED'`, selain itu `IN_PREPAST`/`ACTIVE`. | P0 |
-| FR-5.7 | Bila `StandingTimeAnchor` silo tujuan kosong, set ke waktu finish prepast. | P0 |
+| FR-5.6 | Submit mengurangi `qty_remaining_ltr` batch induk hanya sebesar volume yang sudah diisi. Jika volume masih kosong, pengurangan dilakukan secara atomik saat volume dilengkapi. Bila sisa mencapai 0, induk menjadi `buffer_status='COMPLETED'` + `status_fifo='CLOSED'`, selain itu `IN_PREPAST`/`ACTIVE`. **Bila sisa batch induk belum diketahui, batch induk sama sekali tidak disentuh** (tetap gantung apa adanya) — tidak ada yang dikurangi karena Volume-nya juga pasti masih kosong. | P0 |
+| FR-5.7 | Bila silo tujuan, volume, dan waktu finish sudah tersedia serta `StandingTimeAnchor` silo kosong, set anchor ke waktu finish prepast. | P0 |
 | FR-5.8 | Toggle GANTUNG menyimpan record tanpa waktu; dilengkapi belakangan lewat update in-place. | P0 |
 | FR-5.9 | Koreksi: PST lama menjadi `REVISED`, selisih volume dikembalikan ke induk Receiving, status induk dihitung ulang. | P0 |
+| FR-5.10 | Melengkapi Volume Prepast (lewat "Lengkapi") ditolak selama Berat Jenis Receiving induknya masih kosong (`RECEIVING_BJ_BELUM_DIISI`) — Volume baru dapat dilengkapi setelah sisa batch induk diketahui. | P0 |
 
 ### FR-6 Modul Transfer
 
@@ -362,7 +368,7 @@ Notasi: **P0** wajib untuk go-live · **P1** penting · **P2** nice to have.
 | FR-6.1 | Dua jenis: **PEMAKAIAN PRODUKSI** (ke tank, wajib batch number) dan **PINDAH SILO** (ke silo lain, batch otomatis `"TF TO <silo>"`). | P0 |
 | FR-6.2 | Tampilkan pratinjau FIFO: tiap batch prepast aktif dengan supplier, sisa volume, dan waktu masuk — diurutkan `prepast_finish` menaik. | P0 |
 | FR-6.3 | Saat volume diisi, hitung alokasi FIFO secara live (algoritma di 2.5) dan tampilkan sisa yang belum teralokasi. | P0 |
-| FR-6.4 | Validasi: volume > 0 · volume ≤ volume aktual silo · alokasi FIFO tuntas (sisa = 0) · tujuan terisi · batch terisi untuk PEMAKAIAN PRODUKSI · jam/menit 2 digit. | P0 |
+| FR-6.4 | Validasi: volume > 0 · volume ≤ volume aktual silo · alokasi FIFO tuntas (sisa = 0) · tujuan terisi · batch terisi untuk PEMAKAIAN PRODUKSI · jam/menit 2 digit. **Kapasitas silo tujuan pada PINDAH SILO (BR-24) sejak September 2026 TIDAK memblokir** — keputusan operasional, lihat FR-6.14. | P0 |
 | FR-6.5 | Submit mengurangi `qty_remaining_ltr` tiap prepast teralokasi dan menutupnya bila mencapai nol. | P0 |
 | FR-6.6 | `cmd_destination` = `CMD2` bila tank tujuan CMD 2, selain itu `CMD1`. | P0 |
 | FR-6.7 | **Rollover tanggal transfer:** bila waktu transfer jatuh sebelum `StandingTimeAnchor`, tanggal +1 hari. | P0 |
@@ -372,6 +378,7 @@ Notasi: **P0** wajib untuk go-live · **P1** penting · **P2** nice to have.
 | FR-6.11 | Anchor silo tujuan: diwariskan dari silo asal bila transfer penuh, `Now()` bila sebagian — hanya diterapkan bila anchor tujuan masih kosong. | P0 |
 | FR-6.12 | Koreksi menjalankan reversal penuh sebelum entri baru (lihat 2.7); reversal harus idempoten. | P0 |
 | FR-6.13 | Toggle GANTUNG tersedia; pelengkapan memperbarui `trf_time` dan `standing_time_menit` in-place. | P0 |
+| FR-6.14 | **PINDAH SILO — kapasitas silo tujuan jadi soft cap.** Volume yang melampaui kapasitas nominal, bahkan batas keras (kapasitas + toleransi), TETAP tersimpan apa adanya — tidak ditolak. Kapasitas nominal murni informasi/peringatan (`melampauiNominalTujuan` pada response, badge peringatan di form sebelum submit). Setiap transfer yang melampaui batas keras dicatat `melampaui_kapasitas = TRUE` (migrasi 027) agar tetap dapat ditinjau/difilter SPV & QA di Data List. **Prepast (FR-29.7) TIDAK ikut berubah** — batas kerasnya tetap ditegakkan keras di sana. | P0 |
 
 ### FR-7 Modul Monitoring
 
@@ -878,6 +885,8 @@ Aplikasi sekarang memaksa operator **mengisi form yang sama berulang kali**, sat
 | FR-29.7 | Volume per baris tidak boleh melebihi kapasitas tersisa silo tujuannya masing-masing | P0 |
 | FR-29.8 | `StandingTimeAnchor` diperbarui untuk setiap silo tujuan yang anchor-nya masih kosong (BR-09, berlaku per baris) | P0 |
 | FR-29.9 | Koreksi atas prepast multi-silo menampilkan seluruh barisnya kembali sebagai satu kesatuan, bukan sebagai record terpisah | P1 |
+| FR-29.10 | Silo tujuan boleh kosong saat penyimpanan awal. Record tetap menyimpan volume sebagai GANTUNG, muncul di **Perlu dilengkapi**, belum masuk stok silo/FIFO, dan kapasitas diperiksa saat silo dilengkapi | P0 |
+| FR-29.11 | Volume boleh kosong saat penyimpanan awal, baik silo sudah dipilih maupun belum. Record disimpan dengan volume dan sisa `NULL`, tidak mengurangi buffer, dan volume ditagih lewat **Perlu dilengkapi**. Saat volume dilengkapi, sisa receiving serta kapasitas silo divalidasi ulang dalam satu transaksi | P0 |
 
 **Rancangan antarmuka:**
 
@@ -915,7 +924,7 @@ FR-29 memperbaiki satu bentuk pengulangan. Menelusuri seluruh alur input, ditemu
 | FR-30.4 | **Prefill waktu berantai** | Sebagian sudah ada — jam mulai prepast terisi dari finish penerimaan | Diperluas dan dikonsistenkan: jam mulai prepast berikutnya = jam selesai prepast sebelumnya di jalur yang sama | P1 |
 | FR-30.5 | **Nilai berulang antar hari** | Flowrate dan suhu diketik ulang tiap batch meski nilainya nyaris tetap | Nilai terakhir ditawarkan sebagai default yang dapat ditimpa, ditandai jelas sebagai saran | P2 |
 | FR-30.6 | **Stock opname bulanan** | Seluruh silo diisi dari nol tiap periode | Tawarkan volume aktual sistem sebagai nilai awal — operator mengoreksi selisihnya, tidak mengetik dari kosong | P1 |
-| FR-30.7 | **Batch transfer multi-baris** | Batch yang sama diketik ulang pada setiap transfer tambahan | Operator memilih `Batch sama` untuk mengisi prefiks + nomor sekali bagi seluruh tank beraturan `PILIH`, atau `Manual per transfer` untuk mengisi batch berbeda pada tiap baris. Aturan `CMD2`, tanpa batch, dan pindah silo tetap ditentukan sistem. | P1 |
+| FR-30.7 | **Mode pengisian transfer multi-baris** | Waktu dan batch yang sama diketik ulang pada setiap transfer tambahan | Operator memilih `Batch sama` untuk mengisi waktu, prefiks, dan nomor sekali bagi seluruh transfer, atau `Manual per transfer` untuk mengisi waktu serta batch berbeda pada tiap kartu Transfer. Aturan `CMD2`, tanpa batch, dan pindah silo tetap ditentukan sistem. | P1 |
 
 **FR-30.1 patut didahulukan.** Monitoring adalah aktivitas paling sering di seluruh sistem — 8 silo × 7 kali cek sehari berarti sampai 56 kali pengisian form per hari, masing-masing mengulang pemilihan silo dan penulisan waktu. Menggabungkannya menjadi satu form ronde memangkas beban itu menjadi 7 kali.
 
@@ -982,6 +991,7 @@ dampaknya terlihat sebelum dinonaktifkan, bukan sesudah.
 | Penjaga | Alasan |
 |---|---|
 | Kapasitas silo tidak boleh turun di bawah isinya (FR-26.2.6) | Angka kapasitas yang lebih kecil daripada isinya adalah angka yang berbohong. Batasnya nominal + toleransi (BR-24), bukan nominal saja |
+| Toleransi (BR-24) dapat dinonaktifkan per silo lewat switch di Master Data, tanpa menghapus angka `toleransi_ltr` yang tersimpan | Sebagian silo tidak boleh pernah melampaui kapasitas nominalnya sama sekali; menonaktifkan cukup mengubah bagaimana `v_silo_volume` MEMAKAI angkanya (jadi 0), sementara konfigurasinya sendiri tetap tersimpan untuk dipakai lagi begitu dinyalakan |
 | Silo berisi tidak dapat dinonaktifkan | Volumenya akan hilang dari dashboard tanpa pernah keluar dari silo |
 | Admin tidak dapat menonaktifkan akunnya sendiri | Tidak ada yang dapat memulihkannya dari dalam |
 | Admin terakhir tidak dapat diturunkan atau dinonaktifkan | Master data akan menjadi tidak dapat dikelola siapa pun |
@@ -1264,7 +1274,7 @@ CREATE TABLE prepast_record (
   receiving_id       BIGINT NULL,                      -- NULL bila anak PINDAH SILO
   parent_prepast_id  BIGINT NULL,                      -- terisi bila anak PINDAH SILO
   supplier_id        BIGINT NOT NULL,
-  silo_tujuan_id     BIGINT NOT NULL,
+  silo_tujuan_id     BIGINT NULL,                      -- NULL bila belum dilengkapi
   vol_prepast_ltr    DECIMAL(12,2) NOT NULL,
   qty_remaining_ltr  DECIMAL(12,2) NOT NULL,
   prepast_start      DATETIME NULL,                    -- NULL bila GANTUNG

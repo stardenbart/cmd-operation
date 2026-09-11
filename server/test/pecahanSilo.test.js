@@ -9,7 +9,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { validasiPecahan } from './pecahanSilo.js';
+import { validasiPecahan } from '../src/services/pecahanSilo.js';
 
 /** Menangkap error dan mengembalikan kode aturannya. */
 function kodeError(fn) {
@@ -47,6 +47,21 @@ describe('validasiPecahan — kasus sah', () => {
 
     assert.equal(hasil.totalLtr, 3000);
     assert.equal(hasil.sisaTakTeralokasi, 8455);
+  });
+
+  test('volume kosong dipertahankan sebagai NULL tanpa mengurangi batch', () => {
+    const hasil = validasiPecahan([{ siloId: 2 }], 5000, KAPASITAS);
+
+    assert.equal(hasil.totalLtr, 0);
+    assert.equal(hasil.sisaTakTeralokasi, 5000);
+    assert.deepEqual(hasil.pecahan, [{ siloId: 2, volumeLtr: null }]);
+  });
+
+  test('silo dan volume boleh sama-sama kosong', () => {
+    const hasil = validasiPecahan([{}], 5000, KAPASITAS);
+
+    assert.equal(hasil.totalLtr, 0);
+    assert.deepEqual(hasil.pecahan, [{ siloId: null, volumeLtr: null }]);
   });
 
   test('menjaga presisi dua desimal', () => {
@@ -115,6 +130,41 @@ describe('validasiPecahan — BR-06 tidak boleh melebihi batch induk', () => {
   });
 });
 
+describe('validasiPecahan — sisa batch belum diketahui (Receiving tanpa Berat Jenis)', () => {
+  test('pecahan tanpa volume diterima, totalnya 0, sisa tak teralokasi null', () => {
+    const hasil = validasiPecahan([{ siloId: 2 }], null, KAPASITAS);
+    assert.equal(hasil.totalLtr, 0);
+    assert.equal(hasil.sisaTakTeralokasi, null);
+    assert.equal(hasil.pecahan[0].siloId, 2);
+    assert.equal(hasil.pecahan[0].volumeLtr, null);
+  });
+
+  test('pecahan tanpa silo maupun volume tetap diterima', () => {
+    const hasil = validasiPecahan([{}], null, KAPASITAS);
+    assert.equal(hasil.totalLtr, 0);
+  });
+
+  test('pecahan dengan volume ditolak — kode BERAT_JENIS_BELUM_DIISI', () => {
+    assert.throws(
+      () => validasiPecahan([{ siloId: 2, volumeLtr: 1000 }], null, KAPASITAS),
+      (err) => err.kode === 'BERAT_JENIS_BELUM_DIISI',
+    );
+  });
+
+  test('pecahan tanpa silo tapi dengan volume tetap ditolak', () => {
+    assert.throws(
+      () => validasiPecahan([{ volumeLtr: 1000 }], null, KAPASITAS),
+      (err) => err.kode === 'BERAT_JENIS_BELUM_DIISI',
+    );
+  });
+
+  test('tidak dianggap "batch habis" — BR-06 lama tidak ikut terlempar', () => {
+    // sisaBatchLtr = null tidak boleh disalahartikan sebagai 0/habis.
+    const hasil = validasiPecahan([{ siloId: 2 }, { siloId: 3 }], null, KAPASITAS);
+    assert.equal(hasil.totalLtr, 0);
+  });
+});
+
 describe('validasiPecahan — FR-29.7 kapasitas per silo', () => {
   test('menolak volume yang melebihi kapasitas tersisa silo tujuan', () => {
     // Silo 4 hanya menyisakan 500 L
@@ -139,7 +189,7 @@ describe('validasiPecahan — FR-29.7 kapasitas per silo', () => {
 
 describe('validasiPecahan — masukan tidak sah', () => {
   test('menolak daftar kosong', () => {
-    assert.throws(() => validasiPecahan([], 5000, KAPASITAS), /minimal satu silo/i);
+    assert.throws(() => validasiPecahan([], 5000, KAPASITAS), /minimal satu baris/i);
   });
 
   test('menolak volume nol atau negatif', () => {

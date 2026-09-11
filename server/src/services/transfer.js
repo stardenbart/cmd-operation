@@ -105,7 +105,7 @@ export async function konteksForm(siloAsalId) {
        FROM tank_master WHERE is_active = TRUE ORDER BY urutan`,
   );
   const [siloTujuan] = await pool.query(
-    `SELECT silo_id, kode, silo_name, vol_tersedia_ltr
+    `SELECT silo_id, kode, silo_name, vol_tersedia_ltr, vol_tersedia_toleransi_ltr
        FROM v_silo_volume
       WHERE is_buffer = FALSE AND silo_id <> ?
       ORDER BY urutan`,
@@ -138,12 +138,12 @@ export async function buat(masukan, aktor, ip) {
 /**
  * Beberapa transfer dalam SATU transaksi - FR-6 multi-baris.
  *
- * Operator kerap memindahkan susu ke beberapa MT dari silo yang berbeda pada
- * waktu yang sama: volume, silo asal, dan tank tujuan berbeda tetapi waktunya
- * satu. Semua baris disimpan atomik - gagal satu baris berarti tidak ada yang
- * tersimpan (M-1). Karena satu transaksi, kunci FOR UPDATE tetap terpegang
- * sehingga baris berikutnya membaca sisa FIFO yang sudah dikurangi baris
- * sebelumnya bila kebetulan menyentuh silo yang sama.
+ * Operator kerap memindahkan susu ke beberapa MT dari silo yang berbeda.
+ * Mode SAMA memakai satu waktu bersama, sedangkan mode MANUAL menyimpan waktu
+ * masing-masing baris. Semua baris disimpan atomik - gagal satu baris berarti
+ * tidak ada yang tersimpan (M-1). Karena satu transaksi, kunci FOR UPDATE tetap
+ * terpegang sehingga baris berikutnya membaca sisa FIFO yang sudah dikurangi
+ * baris sebelumnya bila kebetulan menyentuh silo yang sama.
  */
 export async function buatBanyak({
   trfTime,
@@ -159,9 +159,49 @@ export async function buatBanyak({
     throw new BusinessError('VALIDATION_ERROR', `Mode batch tidak dikenal: ${modeBatch}`);
   }
 
+  const punyaWaktu = (nilai) => nilai !== undefined && nilai !== null && nilai !== '';
+  const adaWaktuPerBaris = modeBatch === 'MANUAL' && baris.some((b) => punyaWaktu(b.trfTime));
+  const waktuEfektif = baris.map((b, index) => {
+    // Fallback ke waktu request mempertahankan kontrak klien lama yang belum
+    // mengirim modeBatch maupun trfTime pada tiap baris.
+    const nilai = modeBatch === 'SAMA' || !adaWaktuPerBaris ? trfTime : b.trfTime;
+    if (!punyaWaktu(nilai) && !isDraft) {
+      throw new BusinessError(
+        'TRANSFER_TIME_REQUIRED',
+        `Waktu transfer wajib diisi pada Transfer ${index + 1}`,
+        { baris: index + 1 },
+      );
+    }
+    if (punyaWaktu(nilai) && Number.isNaN(new Date(nilai).getTime())) {
+      throw new BusinessError(
+        'VALIDATION_ERROR',
+        `Waktu transfer pada Transfer ${index + 1} tidak valid`,
+        { baris: index + 1 },
+      );
+    }
+    return nilai;
+  });
+
+  // Untuk silo yang sama, urutan input juga merupakan urutan alokasi FIFO dan
+  // perubahan anchor. Karena itu waktunya tidak boleh mundur antarbaris.
+  const waktuTerakhirPerSilo = new Map();
+  baris.forEach((b, index) => {
+    if (!punyaWaktu(waktuEfektif[index])) return;
+    const saatIni = new Date(waktuEfektif[index]).getTime();
+    const sebelumnya = waktuTerakhirPerSilo.get(b.siloAsalId);
+    if (sebelumnya !== undefined && saatIni < sebelumnya) {
+      throw new BusinessError(
+        'TRANSFER_TIME_ORDER',
+        `Waktu Transfer ${index + 1} tidak boleh lebih awal dari transfer sebelumnya pada silo yang sama`,
+        { baris: index + 1, siloAsalId: b.siloAsalId },
+      );
+    }
+    waktuTerakhirPerSilo.set(b.siloAsalId, saatIni);
+  });
+
   return withTransaction(async (conn) => {
     const transfers = [];
-    for (const b of baris) {
+    for (const [index, b] of baris.entries()) {
       // Mode SAMA ditegakkan kembali di server agar seluruh tank beraturan
       // PILIH benar-benar memakai sumber batch yang sama. Tank CMD2,
       // TANPA_BATCH, dan PINDAH SILO tetap mengabaikan nilai ini di buatDalam.
@@ -177,7 +217,7 @@ export async function buatBanyak({
 
       transfers.push(await buatDalam(
         conn,
-        { ...b, ...nilaiBatch, trfTime, isDraft },
+        { ...b, ...nilaiBatch, trfTime: waktuEfektif[index], isDraft },
         aktor,
         ip,
       ));
@@ -226,7 +266,7 @@ async function buatDalam(conn, masukan, aktor, ip) {
       // Kunci pada baris silo sudah cukup — ia yang menyerialkan transfer
       // bersamaan menuju silo yang sama.
       const [s] = await conn.query(
-        `SELECT id, kode, silo_name, is_buffer, standing_time_anchor, toleransi_ltr
+        `SELECT id, kode, silo_name, is_buffer, standing_time_anchor, toleransi_ltr, toleransi_aktif
            FROM silo WHERE id = ? FOR UPDATE`,
         [siloTujuanId],
       );
@@ -284,23 +324,27 @@ async function buatDalam(conn, masukan, aktor, ip) {
     // Celah yang tidak ditutup Power Apps: PINDAH SILO menambah volume ke silo
     // tujuan, tetapi kapasitas tujuan tidak pernah diperiksa — sehingga silo
     // dapat terisi melampaui kapasitas fisiknya tanpa peringatan apa pun.
+    //
+    // KEPUTUSAN OPERASIONAL (dikonfirmasi pengguna, September 2026): batas
+    // keras (kapasitas + toleransi) TIDAK LAGI memblokir Pindah Silo. Silo
+    // produksi kadang perlu menampung lebih dari angka nominalnya, dan
+    // penolakan keras di titik ini pernah membuat operator terhambat mencatat
+    // susu yang secara fisik sudah ada di silo. Kapasitas nominal sekarang
+    // murni informasi/peringatan — bukan pembatas input — untuk Pindah Silo.
+    // Prepast (pecahanSilo.js) TIDAK ikut berubah; batas kerasnya tetap
+    // ditegakkan di sana.
     if (jenis === 'PINDAH SILO') {
       const sisaNominal = Number(siloTujuan.vol_tersedia_ltr ?? 0);
-      // Batas keras dibaca langsung dari VIEW — lihat catatan di pecahanSilo.js
       const sisaBatasKeras = Number(siloTujuan.vol_tersedia_toleransi_ltr ?? 0);
-      if (volumeLtr > sisaBatasKeras) {
-        throw new BusinessError(
-          'FR-29.7',
-          `Volume ${volumeLtr} L melebihi kapasitas silo ${siloTujuan.silo_name} ` +
-            `(sisa nominal ${sisaNominal} L, batas keras ${sisaBatasKeras} L)`,
-          { sisaNominalLtr: sisaNominal, batasKerasLtr: sisaBatasKeras },
-        );
-      }
       if (volumeLtr > sisaNominal) {
         melampauiNominalTujuan = {
           siloName: siloTujuan.silo_name,
           sisaNominalLtr: sisaNominal,
           kelebihanLtr: Number((volumeLtr - sisaNominal).toFixed(2)),
+          // Beda dari sekadar "lewat nominal, masih dalam toleransi" (kondisi
+          // lama yang sudah sah) — ini sungguh melampaui bahkan batas keras.
+          melebihiBatasKeras: volumeLtr > sisaBatasKeras,
+          batasKerasLtr: sisaBatasKeras,
         };
       }
     }
@@ -341,14 +385,19 @@ async function buatDalam(conn, masukan, aktor, ip) {
     const [hasilTrf] = await conn.query(
       `INSERT INTO transfer
          (kode, transfer_type, silo_asal_id, tank_id, silo_tujuan_id,
-          vol_ltr, vol_akt_silo_ltr, batch, trf_time, standing_time_menit,
+          vol_ltr, vol_akt_silo_ltr, melampaui_kapasitas, batch, trf_time,
+          standing_time_menit,
           anchor_asal_sebelum, anchor_tujuan_diset,
           operator_id, status_approval, cmd_destination, is_gantung)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending Approval', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending Approval', ?, ?)`,
       [
         kode, jenis, siloAsalId,
         tank?.id ?? null, siloTujuan?.id ?? null,
-        volumeLtr, volAktual, batch,
+        volumeLtr, volAktual,
+        // Dicatat sebagai jejak permanen — lihat migrasi 027 — karena batas
+        // keras Pindah Silo tidak lagi memblokir input (keputusan operasional).
+        Boolean(melampauiNominalTujuan?.melebihiBatasKeras),
+        batch,
         draft ? null : trfTime,
         standingMenit,
         // Anchor lama direkam agar void dapat memulihkannya. Menghitung ulang

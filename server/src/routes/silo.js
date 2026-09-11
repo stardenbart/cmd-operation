@@ -7,7 +7,7 @@ import { asyncHandler, NotFoundError } from '../middleware/errors.js';
 import { validasiQuery } from '../middleware/validasi.js';
 import { normalisasiWaktuFilter, selisihMenit } from '../services/waktu.js';
 import { snapshotSilo } from '../services/snapshotSilo.js';
-import { siloLive, batchAktifLive } from '../services/dashboardLive.js';
+import { siloLive, batchAktifLive, kgBelumTerkonversi } from '../services/dashboardLive.js';
 
 const router = Router();
 router.use(wajibLogin);
@@ -50,7 +50,10 @@ router.get(
   validasiQuery(skemaWaktu),
   asyncHandler(async (req, res) => {
     if (req.query.sampai) {
-      const hasil = await snapshotSilo(new Date(req.query.sampai));
+      const [hasil, kg] = await Promise.all([
+        snapshotSilo(new Date(req.query.sampai)),
+        kgBelumTerkonversi(),
+      ]);
       const penyimpanan = hasil.silos.filter((b) => !b.is_buffer);
       res.json({
         data: hasil.silos,
@@ -61,6 +64,10 @@ router.get(
           totalKapasitasLtr: penyimpanan.reduce((s, b) => s + Number(b.kapasitas_maks_ltr), 0),
           perluDicek: hasil.silos.filter((b) => b.status_cek === 'PERLU_DICEK').length,
           melampauiNominal: hasil.silos.filter((b) => b.dalam_toleransi).length,
+          // Ini kondisi SEKARANG, bukan pada waktu snapshot — Berat Jenis
+          // yang belum diisi adalah backlog operasional yang berlaku
+          // terlepas dari rentang waktu yang sedang dilihat.
+          ...kg,
         },
       });
       return;

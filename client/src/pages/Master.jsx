@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unduh } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
 import {
-  fmt, waktuSingkat, Field, Lencana, PesanGalat, PesanSukses, Kosong,
+  fmt, waktuSingkat, Field, Lencana, PesanGalat, PesanSukses, Kosong, Sakelar,
 } from '../components/ui.jsx';
 import BerkasSiap from '../components/BerkasSiap.jsx';
 
@@ -17,9 +17,13 @@ import BerkasSiap from '../components/BerkasSiap.jsx';
  * dua kali akan menyimpang.
  */
 
+// boolean dan sakelar mulai dari bawaannya sama-sama; keduanya cuma beda
+// tampilan (checkbox vs switch), bukan beda makna nilainya.
+const JENIS_BOOLEAN = ['boolean', 'sakelar'];
+
 const nilaiKosong = (kolom) =>
   Object.fromEntries(
-    kolom.map((k) => [k.k, k.jenis === 'boolean' ? (k.bawaan ?? false) : '']),
+    kolom.map((k) => [k.k, JENIS_BOOLEAN.includes(k.jenis) ? (k.bawaan ?? false) : '']),
   );
 
 function InputKolom({ kolom, nilai, onChange, nonaktif }) {
@@ -34,6 +38,16 @@ function InputKolom({ kolom, nilai, onChange, nonaktif }) {
         />
         <span>{kolom.label}</span>
       </label>
+    );
+  }
+  if (kolom.jenis === 'sakelar') {
+    return (
+      <Sakelar
+        checked={Boolean(nilai)}
+        disabled={nonaktif}
+        onChange={set}
+        label={Boolean(nilai) ? 'Aktif' : 'Nonaktif'}
+      />
     );
   }
   if (kolom.jenis === 'pilihan') {
@@ -73,7 +87,7 @@ function InputKolom({ kolom, nilai, onChange, nonaktif }) {
 
 function tampilNilai(kolom, baris) {
   const v = baris[kolom.k];
-  if (kolom.jenis === 'boolean') {
+  if (JENIS_BOOLEAN.includes(kolom.jenis)) {
     return v ? <Lencana nada="baik">Ya</Lencana> : <span className="bantuan">tidak</span>;
   }
   if (v === null || v === undefined || v === '') return <span className="bantuan">-</span>;
@@ -259,6 +273,41 @@ function HakAksesTambahan({ userId, onSelesai, onGalat }) {
   );
 }
 
+/**
+ * Preferensi tampilan GLOBAL untuk dropdown pilih silo di Prepast/Lengkapi
+ * Prepast — bukan atribut satu silo, jadi ditaruh di atas daftar, bukan
+ * kolom per baris. Berlaku sama untuk semua orang begitu disimpan; hanya
+ * Admin yang boleh mengubahnya (wewenang sesungguhnya ditegakkan di server).
+ */
+function PengaturanSiloGlobal({ bolehUbah }) {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ['pengaturan'],
+    queryFn: () => api.get('/pengaturan'),
+  });
+
+  const simpan = useMutation({
+    mutationFn: (tampilkanSisaSilo) => api.patch('/pengaturan', { tampilkanSisaSilo }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pengaturan'] }),
+  });
+
+  const nilai = data?.data?.tampilkanSisaSilo ?? true;
+
+  return (
+    <div className="kartu baris" style={{ gap: 12 }}>
+      <Sakelar
+        checked={nilai}
+        disabled={!bolehUbah || simpan.isPending}
+        onChange={(v) => simpan.mutate(v)}
+        label="Tampilkan sisa kapasitas di dropdown pilih silo Prepast"
+      />
+      <span className="bantuan dorong">
+        Berlaku untuk semua orang — bukan cuma tampilan Anda sendiri.
+      </span>
+    </div>
+  );
+}
+
 function DaftarMaster({ master }) {
   const qc = useQueryClient();
   const { boleh } = useAuth();
@@ -291,6 +340,16 @@ function DaftarMaster({ master }) {
     qc.invalidateQueries({ queryKey: ['master'] });
     qc.invalidateQueries({ queryKey: ['master-ringkasan'] });
     qc.invalidateQueries({ queryKey: ['master-riwayat'] });
+    // Master Silo memengaruhi tampilan Dashboard ('silos', jamak — daftar
+    // seluruh silo) dan Detail Silo ('silo', tunggal — satu silo by id),
+    // dua kunci cache yang berbeda untuk kapasitas/toleransi/Bejana. Tanpa
+    // ini, menyalakan/mematikan switch toleransi tersimpan dengan benar
+    // tapi kedua halaman itu tetap menampilkan data lama sampai refresh
+    // manual atau polling 30 detiknya kebetulan jalan.
+    if (master === 'silos') {
+      qc.invalidateQueries({ queryKey: ['silos'] });
+      qc.invalidateQueries({ queryKey: ['silo'] });
+    }
   };
 
   const simpan = useMutation({
@@ -348,6 +407,8 @@ function DaftarMaster({ master }) {
       <BerkasSiap hasil={berkas} onTutup={() => setBerkas(null)} />
       <PesanGalat galat={galat} onTutup={() => setGalat(null)} />
 
+      {master === 'silos' && <PengaturanSiloGlobal bolehUbah={bolehKelola} />}
+
       <div className="kartu master-filter">
         <div className="form-grid">
           <Field label="Cari">
@@ -402,16 +463,23 @@ function DaftarMaster({ master }) {
           )}
 
           <div className="form-grid">
-            {kolom.map((k) => (
-              <Field key={k.k} label={k.label} wajib={k.wajib} bantuan={k.bantuan}>
-                <InputKolom
-                  kolom={k}
-                  nilai={form[k.k]}
-                  nonaktif={!bolehKelola}
-                  onChange={(nama, v) => setForm({ ...form, [nama]: v })}
-                />
-              </Field>
-            ))}
+            {kolom.map((k) => {
+              // Deklaratif, bukan hardcode nama kolom: master mana pun dapat
+              // memakai nonaktifJika untuk mengunci satu field mengikuti
+              // nilai field lain (mis. angka toleransi mengikuti switch-nya).
+              const nonaktifKarenaAturan = k.nonaktifJika
+                && form[k.nonaktifJika.kolom] === k.nonaktifJika.nilai;
+              return (
+                <Field key={k.k} label={k.label} wajib={k.wajib} bantuan={k.bantuan}>
+                  <InputKolom
+                    kolom={k}
+                    nilai={form[k.k]}
+                    nonaktif={!bolehKelola || nonaktifKarenaAturan}
+                    onChange={(nama, v) => setForm({ ...form, [nama]: v })}
+                  />
+                </Field>
+              );
+            })}
           </div>
 
           <div className="baris">

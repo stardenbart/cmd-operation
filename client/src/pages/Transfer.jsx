@@ -11,7 +11,7 @@ const MODE_BATCH = {
 };
 
 const barisKosong = () => ({
-  siloAsalId: '', jenis: 'PEMAKAIAN PRODUKSI', volumeLtr: '',
+  trfTime: '', siloAsalId: '', jenis: 'PEMAKAIAN PRODUKSI', volumeLtr: '',
   tankId: '', siloTujuanId: '', batchPrefix: '', batchNomor: '',
 });
 
@@ -19,8 +19,8 @@ const barisKosong = () => ({
  * Satu baris transfer - satu silo asal ke satu tujuan.
  *
  * Beberapa baris dapat diisi sekaligus (seperti Prepast multi-silo): operator
- * memindahkan susu ke beberapa MT dari silo berbeda pada waktu yang sama.
- * Waktu transfer diisi SATU KALI di atas dan berlaku untuk seluruh baris.
+ * memindahkan susu ke beberapa MT dari silo berbeda dalam satu kali submit.
+ * Mode SAMA memakai waktu bersama; mode MANUAL menyimpan waktu tiap baris.
  */
 function BarisTransfer({
   index, baris, silos, modeBatch, batchBersama,
@@ -36,6 +36,20 @@ function BarisTransfer({
   const keProduksi = baris.jenis === 'PEMAKAIAN PRODUKSI';
   const tankTerpilih = ctx?.tanks.find((t) => String(t.id) === String(baris.tankId));
   const aturanBatch = tankTerpilih?.aturan_batch ?? null;
+
+  // Pratinjau kapasitas Pindah Silo — sekadar peringatan, bukan penolakan
+  // (lihat catatan di transfer.js). Dihitung dari data yang sudah dimuat
+  // untuk pilihan silo tujuan, tanpa permintaan tambahan.
+  const siloTujuanTerpilih = ctx?.siloTujuan.find((s) => String(s.silo_id) === String(baris.siloTujuanId));
+  const volumeDiketik = angka(baris.volumeLtr);
+  const pratinjauLewatKapasitas = (!keProduksi && siloTujuanTerpilih && volumeDiketik > 0
+    && volumeDiketik > Number(siloTujuanTerpilih.vol_tersedia_ltr))
+    ? {
+      sisaNominalLtr: Number(siloTujuanTerpilih.vol_tersedia_ltr),
+      batasKerasLtr: Number(siloTujuanTerpilih.vol_tersedia_toleransi_ltr),
+      melebihiBatasKeras: volumeDiketik > Number(siloTujuanTerpilih.vol_tersedia_toleransi_ltr),
+    }
+    : null;
 
   const set = (k) => (e) => onUbah(index, { ...baris, [k]: e.target.value });
 
@@ -55,6 +69,17 @@ function BarisTransfer({
       </div>
 
       <div className="form-grid">
+        {modeBatch === MODE_BATCH.MANUAL && (
+          <Field label="Waktu transfer" wajib bantuan={`Khusus Transfer ${index + 1}`}>
+            <input
+              type="datetime-local"
+              value={baris.trfTime}
+              onChange={set('trfTime')}
+              required
+            />
+          </Field>
+        )}
+
         <Field label="Silo asal" wajib>
           <select value={baris.siloAsalId} onChange={set('siloAsalId')} required>
             <option value="">Pilih silo</option>
@@ -141,6 +166,19 @@ function BarisTransfer({
           </Field>
         )}
       </div>
+
+      {!keProduksi && pratinjauLewatKapasitas && (
+        // Kapasitas nominal tidak lagi memblokir Pindah Silo (keputusan
+        // operasional) — ini murni peringatan supaya operator sadar sebelum
+        // submit, bukan penolakan. Transfer tetap bisa disimpan.
+        <div className="pesan pesan--waspada">
+          Volume {fmt(angka(baris.volumeLtr))} L melebihi sisa nominal {siloTujuanTerpilih.silo_name}
+          {' '}({fmt(pratinjauLewatKapasitas.sisaNominalLtr)} L).
+          {pratinjauLewatKapasitas.melebihiBatasKeras
+            ? ` Bahkan melewati batas keras (${fmt(pratinjauLewatKapasitas.batasKerasLtr)} L) — tetap dapat disimpan, tercatat sebagai pengecualian.`
+            : ' Masih dalam toleransi — akan tercatat sebagai pengecualian nominal.'}
+        </div>
+      )}
     </div>
   );
 }
@@ -152,6 +190,7 @@ function nomorBatchValid(nilai) {
 }
 
 function barisValid(b, tanks, modeBatch, batchBersama) {
+  if (modeBatch === MODE_BATCH.MANUAL && !b.trfTime) return false;
   if (!b.siloAsalId || !(angka(b.volumeLtr) > 0)) return false;
   if (b.jenis === 'PEMAKAIAN PRODUKSI') {
     if (!b.tankId) return false;
@@ -188,9 +227,15 @@ export default function Transfer() {
     mutationFn: (body) => api.post('/transfer/batch', body),
     onSuccess: (res) => {
       const t = res.data.transfers;
+      const lewatKapasitas = t.filter((x) => x.melampauiNominalTujuan);
       setSukses(
         `${t.length} transfer tersimpan: ${t.map((x) => x.kode).join(', ')}. ` +
-        `Total ${fmt(t.reduce((s, x) => s + Number(x.volumeLtr), 0))} L.`,
+        `Total ${fmt(t.reduce((s, x) => s + Number(x.volumeLtr), 0))} L.` +
+        (lewatKapasitas.length > 0
+          ? ` Perhatian — ${lewatKapasitas.length} tercatat melebihi kapasitas nominal tujuan: ${
+            lewatKapasitas.map((x) => `${x.melampauiNominalTujuan.siloName} (+${fmt(x.melampauiNominalTujuan.kelebihanLtr)} L${x.melampauiNominalTujuan.melebihiBatasKeras ? ', lewat batas keras' : ''})`).join('; ')
+          }.`
+          : ''),
       );
       setRows([barisKosong()]);
       setTrfTime('');
@@ -219,16 +264,17 @@ export default function Transfer() {
   const semuaValid = rows.length > 0 && rows.every((r) => barisValid(
     r, konteksBatch?.tanks, modeBatch, batchBersama,
   ));
-  const bisaKirim = Boolean(trfTime) && semuaValid && siloLebih.length === 0 && !simpan.isPending;
+  const waktuValid = modeBatch === MODE_BATCH.SAMA ? Boolean(trfTime) : true;
+  const bisaKirim = waktuValid && semuaValid && siloLebih.length === 0 && !simpan.isPending;
 
   function kirim(e) {
     e.preventDefault();
     setSukses(null);
     simpan.mutate({
-      trfTime,
       modeBatch,
-      ...(modeBatch === MODE_BATCH.SAMA ? { batchBersama } : {}),
+      ...(modeBatch === MODE_BATCH.SAMA ? { trfTime, batchBersama } : {}),
       baris: rows.map((r) => ({
+        ...(modeBatch === MODE_BATCH.MANUAL ? { trfTime: r.trfTime } : {}),
         siloAsalId: Number(r.siloAsalId),
         jenis: r.jenis,
         volumeLtr: r.volumeLtr,
@@ -249,56 +295,63 @@ export default function Transfer() {
       <div className="kartu tumpuk">
         <div className="kartu__kepala">
           <h2>Transfer keluar silo</h2>
-          <span className="label">Beberapa MT dari silo berbeda, satu kali input</span>
+          <span className="label">Beberapa transfer dalam satu kali submit</span>
         </div>
 
         <PesanSukses>{sukses}</PesanSukses>
         <PesanGalat galat={simpan.error} onTutup={() => simpan.reset()} />
 
         <div className="form-grid">
-          <Field label="Waktu transfer" wajib bantuan="Berlaku untuk semua baris">
-            <input type="datetime-local" value={trfTime} onChange={(e) => setTrfTime(e.target.value)} required />
-          </Field>
-          <Field label="Cara pengisian batch" wajib>
+          <Field label="Cara pengisian transfer" wajib>
             <select value={modeBatch} onChange={(e) => setModeBatch(e.target.value)}>
               <option value={MODE_BATCH.SAMA}>Batch sama untuk transfer tambahan</option>
               <option value={MODE_BATCH.MANUAL}>Isi manual setiap transfer</option>
             </select>
           </Field>
           {modeBatch === MODE_BATCH.SAMA && (
-            <Field
-              label="Batch bersama"
-              bantuan="Dipakai semua transfer ke tank yang aturan batch-nya PILIH"
-            >
-              <div className="baris" style={{ gap: 8, flexWrap: 'nowrap' }}>
-                <select
-                  value={batchBersama.batchPrefix}
-                  onChange={(e) => setBatchBersama((lama) => ({
-                    ...lama, batchPrefix: e.target.value,
-                  }))}
-                  disabled={!siloKonteks}
-                  style={{ flex: 1 }}
-                >
-                  <option value="">{siloKonteks ? 'Prefiks' : 'Pilih silo asal dahulu'}</option>
-                  {konteksBatch?.prefiksBatch.map((p) => (
-                    <option key={p.kode} value={p.kode}>
-                      {p.kode}{p.is_standar ? '' : ' (non-baku)'}
-                    </option>
-                  ))}
-                </select>
+            <>
+              <Field label="Waktu transfer" wajib bantuan="Berlaku untuk semua baris">
                 <input
-                  className="angka-input"
-                  inputMode="numeric"
-                  style={{ width: 90 }}
-                  value={batchBersama.batchNomor}
-                  onChange={(e) => setBatchBersama((lama) => ({
-                    ...lama, batchNomor: e.target.value,
-                  }))}
-                  placeholder="5"
-                  disabled={!siloKonteks}
+                  type="datetime-local"
+                  value={trfTime}
+                  onChange={(e) => setTrfTime(e.target.value)}
+                  required
                 />
-              </div>
-            </Field>
+              </Field>
+              <Field
+                label="Batch bersama"
+                bantuan="Dipakai semua transfer ke tank yang aturan batch-nya PILIH"
+              >
+                <div className="baris" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                  <select
+                    value={batchBersama.batchPrefix}
+                    onChange={(e) => setBatchBersama((lama) => ({
+                      ...lama, batchPrefix: e.target.value,
+                    }))}
+                    disabled={!siloKonteks}
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">{siloKonteks ? 'Prefiks' : 'Pilih silo asal dahulu'}</option>
+                    {konteksBatch?.prefiksBatch.map((p) => (
+                      <option key={p.kode} value={p.kode}>
+                        {p.kode}{p.is_standar ? '' : ' (non-baku)'}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="angka-input"
+                    inputMode="numeric"
+                    style={{ width: 90 }}
+                    value={batchBersama.batchNomor}
+                    onChange={(e) => setBatchBersama((lama) => ({
+                      ...lama, batchNomor: e.target.value,
+                    }))}
+                    placeholder="5"
+                    disabled={!siloKonteks}
+                  />
+                </div>
+              </Field>
+            </>
           )}
         </div>
       </div>

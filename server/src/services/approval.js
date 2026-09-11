@@ -83,7 +83,7 @@ async function setujuiSatu(conn, modul, id, aktor, ip) {
   if (lama.is_gantung) {
     throw new BusinessError(
       'BR-23',
-      `${lama.kode} masih berupa draft. Lengkapi waktunya sebelum disetujui.`,
+      `${lama.kode} masih berupa draft. Lengkapi seluruh data yang kosong sebelum disetujui.`,
     );
   }
 

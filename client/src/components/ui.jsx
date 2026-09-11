@@ -38,6 +38,29 @@ export function Lencana({ nada = 'netral', children }) {
 }
 
 /**
+ * Toggle on/off — dipakai untuk aturan yang diaktifkan/dinonaktifkan
+ * (mis. toleransi kapasitas silo, BR-24), bukan sekadar atribut ya/tidak.
+ * Checkbox biasa dipakai untuk yang terakhir; ini untuk yang pertama.
+ */
+export function Sakelar({ checked, onChange, disabled, label }) {
+  return (
+    <label className={`sakelar${disabled ? ' sakelar--nonaktif' : ''}`}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={Boolean(checked)}
+        disabled={disabled}
+        className={`sakelar__jalur${checked ? ' sakelar__jalur--on' : ''}`}
+        onClick={() => onChange(!checked)}
+      >
+        <span className="sakelar__knop" />
+      </button>
+      {label && <span>{label}</span>}
+    </label>
+  );
+}
+
+/**
  * Menampilkan galat API beserta kode aturannya.
  *
  * Kode ditampilkan apa adanya (BR-06, FR-29.7, ...) supaya operator dapat

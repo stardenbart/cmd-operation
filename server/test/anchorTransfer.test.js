@@ -12,7 +12,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { putuskanAnchor } from './anchorTransfer.js';
+import { putuskanAnchor } from '../src/services/anchorTransfer.js';
 
 const ANCHOR_ASAL = new Date('2026-08-06T06:13:00Z');
 const WAKTU_TRF = new Date('2026-08-06T14:00:00Z');

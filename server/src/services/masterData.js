@@ -33,10 +33,18 @@ const T = {
   angka: 'angka',
   desimal: 'desimal',
   boolean: 'boolean',
+  // Sama seperti boolean (divalidasi & disimpan identik — lihat JENIS_BOOLEAN
+  // di bawah), tapi dirender sebagai switch on/off, bukan checkbox. Dipakai
+  // untuk field yang maknanya "aktifkan/nonaktifkan aturan", bukan sekadar
+  // atribut ya/tidak.
+  sakelar: 'sakelar',
   pilihan: 'pilihan',
   tanggal: 'tanggal',
   teksPanjang: 'teksPanjang',
 };
+
+/** boolean dan sakelar divalidasi & disimpan dengan cara yang sama. */
+const JENIS_BOOLEAN = [T.boolean, T.sakelar];
 
 /**
  * Definisi tiap master.
@@ -104,10 +112,22 @@ export const MASTER = Object.freeze({
       { k: 'qr_code_value', label: 'Nilai QR', jenis: T.teks, maks: 80 },
       { k: 'kapasitas_maks_ltr', label: 'Kapasitas nominal (L)', jenis: T.desimal, wajib: true },
       {
+        k: 'toleransi_aktif',
+        label: 'Toleransi aktif',
+        jenis: T.sakelar,
+        bawaan: true,
+        bantuan: 'Nonaktifkan untuk melarang pengisian di atas kapasitas nominal (BR-24)',
+      },
+      {
         k: 'toleransi_ltr',
         label: 'Toleransi (L)',
         jenis: T.desimal,
-        bantuan: 'Kelebihan yang masih dapat diterima di atas nominal (BR-24)',
+        bantuan: 'Kelebihan yang masih dapat diterima di atas nominal, selama switch di atas aktif (BR-24)',
+        // Nilainya tetap tersimpan saat switch dimatikan — hanya inputnya yang
+        // dikunci di layar, supaya tidak perlu diketik ulang saat dinyalakan
+        // lagi. Yang membuatnya benar-benar tidak berlaku adalah v_silo_volume
+        // (lihat migrasi 026), bukan pengosongan nilai ini.
+        nonaktifJika: { kolom: 'toleransi_aktif', nilai: false },
       },
       {
         k: 'monitoring_interval_jam',
@@ -301,7 +321,7 @@ function siapkanNilai(def, masukan, { wajibLengkap }) {
 
     let v = masukan[k.k];
 
-    if (k.jenis === T.boolean) {
+    if (JENIS_BOOLEAN.includes(k.jenis)) {
       hasil[k.k] = Boolean(v);
       continue;
     }
@@ -465,7 +485,7 @@ export async function buat(master, masukan, aktor, ip) {
 
   // Kolom boolean yang tidak dikirim mengambil nilai bawaannya
   for (const k of def.kolom) {
-    if (k.jenis === T.boolean && nilai[k.k] === undefined && k.bawaan !== undefined) {
+    if (JENIS_BOOLEAN.includes(k.jenis) && nilai[k.k] === undefined && k.bawaan !== undefined) {
       nilai[k.k] = k.bawaan;
     }
   }

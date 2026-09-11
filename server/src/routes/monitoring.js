@@ -12,8 +12,9 @@ router.use(wajibLogin);
 /** Satu baris hasil pengecekan dalam ronde. */
 const skemaHasil = z.object({
   siloId: z.coerce.number().int().positive(),
-  ph: angkaDesimal({ min: 0, maxDecimals: 2 }),
-  temp: angkaDesimal({ min: -50, maxDecimals: 2 }),
+  // Batas max mengikuti kolom database: ph_check DECIMAL(5,2), temp_check DECIMAL(6,2).
+  ph: angkaDesimal({ min: 0, max: 999.99, maxDecimals: 2 }),
+  temp: angkaDesimal({ min: -50, max: 9999.99, maxDecimals: 2 }),
 });
 
 const skemaRonde = z.object({

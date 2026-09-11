@@ -16,6 +16,7 @@ import { pool } from '../db/pool.js';
 import { can, AKSI } from '../auth/permissions.js';
 import { BusinessError } from '../middleware/errors.js';
 import { statusKelengkapanPrepast } from './prepastGantung.js';
+import { statusKelengkapanReceiving } from './receivingGantung.js';
 
 /**
  * Satu definisi per modul: dari mana barisnya, dan bagaimana meringkasnya.
@@ -28,7 +29,7 @@ const MODUL = {
     sql: `
       SELECT r.id, r.kode, r.qty_ltr AS volume_ltr, r.qty_remaining_ltr,
              r.finish_time AS waktu, r.status_approval, r.status_fifo,
-             FALSE AS is_gantung, r.rejection_comment,
+             r.is_gantung, r.rejection_comment,
              CONCAT(sup.supplier_name, ' ke ', s.silo_name) AS ringkasan,
              o.nama_lengkap AS operator_nama, r.operator_id
         FROM receiving r
@@ -46,6 +47,10 @@ const MODUL = {
       status: 'r.status_approval = ?',
       siloId: 'r.silo_id = ?',
       supplierId: 'r.supplier_id = ?',
+      draftSaja: 'r.is_gantung = TRUE',
+      // Subset draftSaja yang lebih sempit — khusus BJ, dituju kartu Dashboard
+      // "Menunggu Berat Jenis" (lihat dashboardLive.kgBelumTerkonversi()).
+      bjKosong: 'r.berat_jenis IS NULL',
       // Aktif = masih benar-benar ada di buffer (belum habis diprepast).
       aktifSaja: "(r.status_fifo = 'ACTIVE' AND r.qty_remaining_ltr > 0)",
       dariTanggal: 'r.finish_time >= ?',
@@ -59,11 +64,12 @@ const MODUL = {
       SELECT p.id, p.kode, p.vol_prepast_ltr AS volume_ltr, p.qty_remaining_ltr,
              p.prepast_finish AS waktu, p.status_approval, p.status_fifo,
              p.is_gantung, p.rejection_comment,
-             CONCAT(COALESCE(sup.supplier_name, 'Tidak diketahui'), ' ke ', s.silo_name) AS ringkasan,
+             CONCAT(COALESCE(sup.supplier_name, 'Tidak diketahui'), ' ke ',
+                    COALESCE(s.silo_name, 'Belum ditentukan')) AS ringkasan,
              o.nama_lengkap AS operator_nama, p.operator_id
         FROM prepast_record p
         LEFT JOIN supplier sup ON sup.id = p.supplier_id
-        JOIN silo s            ON s.id = p.silo_tujuan_id
+        LEFT JOIN silo s       ON s.id = p.silo_tujuan_id
         JOIN operator o        ON o.id = p.operator_id`,
     where: ["p.jenis_batch = 'PREPAST'"],
     urut: 'p.prepast_finish DESC, p.id DESC',
@@ -119,7 +125,7 @@ const MODUL = {
     sql: `
       SELECT t.id, t.kode, t.vol_ltr AS volume_ltr, NULL AS qty_remaining_ltr,
              t.trf_time AS waktu, t.status_approval, NULL AS status_fifo,
-             t.is_gantung, t.rejection_comment,
+             t.is_gantung, t.melampaui_kapasitas, t.rejection_comment,
              CONCAT(sa.silo_name, ' ke ',
                     COALESCE(st.silo_name, tk.tank_name),
                     COALESCE(CONCAT(' - ', t.batch), '')) AS ringkasan,
@@ -142,6 +148,9 @@ const MODUL = {
       siloId: 't.silo_asal_id = ?',
       tankId: 't.tank_id = ?',
       draftSaja: 't.is_gantung = TRUE',
+      // Ditinjau SPV/QA — Pindah Silo yang tercatat melebihi batas keras
+      // silo tujuan (tidak lagi diblokir sistem, lihat transfer.js).
+      lewatKapasitas: 't.melampaui_kapasitas = TRUE',
       dariTanggal: 't.trf_time >= ?',
       sampaiTanggal: 't.trf_time <= ?',
       cari: '(t.kode LIKE ? OR t.batch LIKE ?)',
@@ -259,23 +268,34 @@ function tindakan(baris, aktor) {
 export async function gantung(aktor) {
   const [baris] = await pool.query(
     `SELECT 'prepast' AS modul, p.kode, p.id, p.created_at, p.operator_id,
-            s.silo_name AS tempat, p.vol_prepast_ltr AS volume_ltr,
+            COALESCE(s.silo_name, 'Belum ditentukan') AS tempat,
+            p.vol_prepast_ltr AS volume_ltr,
             o.nama_lengkap AS operator_nama, p.prepast_start, p.prepast_finish,
-            p.flowrate_pst, p.temp_after_heater, p.temp_output_prd
+            p.flowrate_pst, p.temp_after_heater, p.temp_output_prd,
+            p.silo_tujuan_id, NULL AS berat_jenis, NULL AS nilai_ts
        FROM prepast_record p
-       JOIN silo s      ON s.id = p.silo_tujuan_id
+       LEFT JOIN silo s ON s.id = p.silo_tujuan_id
        JOIN operator o  ON o.id = p.operator_id
       WHERE p.is_gantung = TRUE
         AND p.status_approval NOT IN ('VOIDED', 'REVISED')
       UNION ALL
      SELECT 'transfer', t.kode, t.id, t.created_at, t.operator_id,
             sa.silo_name, t.vol_ltr, o.nama_lengkap,
-            NULL, NULL, NULL, NULL, NULL
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
        FROM transfer t
        JOIN silo sa     ON sa.id = t.silo_asal_id
        JOIN operator o  ON o.id = t.operator_id
       WHERE t.is_gantung = TRUE
         AND t.status_approval NOT IN ('VOIDED', 'REVISED')
+      UNION ALL
+     SELECT 'receiving', r.kode, r.id, r.created_at, r.operator_id,
+            s.silo_name, r.qty_ltr, o.nama_lengkap,
+            NULL, NULL, NULL, NULL, NULL, NULL, r.berat_jenis, r.nilai_ts
+       FROM receiving r
+       JOIN silo s      ON s.id = r.silo_id
+       JOIN operator o  ON o.id = r.operator_id
+      WHERE r.is_gantung = TRUE
+        AND r.status_approval NOT IN ('VOIDED', 'REVISED')
       ORDER BY created_at ASC`,
   );
 
@@ -284,13 +304,20 @@ export async function gantung(aktor) {
   const daftar = baris.map((b) => {
     const fieldKosong = b.modul === 'prepast'
       ? statusKelengkapanPrepast({
+        siloId: b.silo_tujuan_id,
+        volumeLtr: b.volume_ltr,
         prepastStart: b.prepast_start,
         prepastFinish: b.prepast_finish,
         flowrate: b.flowrate_pst,
         tempAfterHeater: b.temp_after_heater,
         tempOutput: b.temp_output_prd,
       }).fieldKosong
-      : [];
+      : b.modul === 'receiving'
+        ? statusKelengkapanReceiving({
+          beratJenis: b.berat_jenis,
+          nilaiTs: b.nilai_ts,
+        }).fieldKosong
+        : [];
 
     return {
       modul: b.modul,
@@ -441,7 +468,7 @@ export async function detail(modul, id) {
     receiving: `
       SELECT r.kode, r.status_approval, r.finish_time, r.qty_kg, r.berat_jenis,
              r.nilai_ts, r.qty_ltr, r.qty_remaining_ltr, r.buffer_status,
-             r.remarks, r.rejection_comment, r.created_at, r.updated_at,
+             r.is_gantung, r.remarks, r.rejection_comment, r.created_at, r.updated_at,
              sup.supplier_name, s.silo_name, o.nama_lengkap AS operator_nama
         FROM receiving r
         JOIN supplier sup ON sup.id = r.supplier_id
@@ -454,10 +481,11 @@ export async function detail(modul, id) {
              p.temp_after_heater, p.temp_output_prd, p.nilai_ts, p.is_gantung,
              p.remarks, p.rejection_comment, p.created_at, p.updated_at,
              COALESCE(sup.supplier_name, 'Tidak diketahui') AS supplier_name,
-             s.silo_name, r.kode AS receiving_kode, o.nama_lengkap AS operator_nama
+             COALESCE(s.silo_name, 'Belum ditentukan') AS silo_name,
+             r.kode AS receiving_kode, o.nama_lengkap AS operator_nama
         FROM prepast_record p
         LEFT JOIN supplier sup ON sup.id = p.supplier_id
-        JOIN silo s ON s.id = p.silo_tujuan_id
+        LEFT JOIN silo s ON s.id = p.silo_tujuan_id
         LEFT JOIN receiving r ON r.id = p.receiving_id
         JOIN operator o ON o.id = p.operator_id
        WHERE p.id = ?`,
@@ -471,7 +499,8 @@ export async function detail(modul, id) {
        WHERE p.id = ?`,
     transfer: `
       SELECT t.kode, t.status_approval, t.transfer_type, t.trf_time, t.vol_ltr,
-             t.vol_akt_silo_ltr, t.batch, t.cmd_destination, t.standing_time_menit,
+             t.vol_akt_silo_ltr, t.melampaui_kapasitas, t.batch, t.cmd_destination,
+             t.standing_time_menit,
              t.is_gantung, t.rejection_comment, t.created_at, t.updated_at,
              sa.silo_name AS silo_asal_nama, st.silo_name AS silo_tujuan_nama,
              tk.tank_name, o.nama_lengkap AS operator_nama
@@ -505,7 +534,9 @@ export async function detail(modul, id) {
       ['Qty (Kg)', num(r.qty_kg)], ['Berat jenis', num(r.berat_jenis, 3)],
       ['Nilai TS', num(r.nilai_ts, 1)], ['Volume (L)', num(r.qty_ltr)],
       ['Sisa di buffer (L)', num(r.qty_remaining_ltr)],
-      ['Status buffer', r.buffer_status], ['Catatan', r.remarks],
+      ['Status buffer', r.buffer_status],
+      ['Menggantung', r.is_gantung ? 'Ya - belum lengkap' : 'Tidak'],
+      ['Catatan', r.remarks],
     ],
     prepast: [
       ['Supplier', r.supplier_name], ['Silo tujuan', r.silo_name],
@@ -530,6 +561,7 @@ export async function detail(modul, id) {
       ['Tujuan CMD', r.cmd_destination],
       ['Standing time (menit)', r.standing_time_menit === null ? null : Number(r.standing_time_menit)],
       ['Menggantung', r.is_gantung ? 'Ya - belum lengkap' : 'Tidak'],
+      ['Kapasitas tujuan', r.melampaui_kapasitas ? 'Melebihi batas keras silo tujuan' : null],
     ],
     monitoring: [
       ['Silo', r.silo_name], ['Waktu cek', r.time_check, 'waktu'],

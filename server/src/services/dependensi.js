@@ -25,9 +25,9 @@ const DIABAIKAN = ['Rejected', 'REVISED', 'VOIDED'];
 async function anakReceiving(conn, id) {
   const [baris] = await conn.query(
     `SELECT p.id, p.kode, p.vol_prepast_ltr AS volume_ltr, p.status_approval,
-            p.jenis_batch, s.silo_name AS lokasi
+            p.jenis_batch, COALESCE(s.silo_name, 'Belum ditentukan') AS lokasi
        FROM prepast_record p
-       JOIN silo s ON s.id = p.silo_tujuan_id
+       LEFT JOIN silo s ON s.id = p.silo_tujuan_id
       WHERE p.receiving_id = ?
         AND p.status_approval NOT IN (?, ?, ?)
       ORDER BY p.prepast_finish ASC, p.id ASC`,

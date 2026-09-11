@@ -44,6 +44,16 @@ const kirimTransfer = (port, body) =>
     body: JSON.stringify(body),
   });
 
+const kirimTransferBatch = (port, body) =>
+  fetch(`http://127.0.0.1:${port}/api/v1/transfer/batch`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${tokenOperator()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
 const fields = (body) => (body.error?.details ?? body.details ?? []).map((d) => d.field);
 
 test('PEMAKAIAN PRODUKSI: siloTujuanId kosong tidak lagi ditolak sebagai ">0"', async () => {
@@ -84,5 +94,55 @@ test('PINDAH SILO: tankId kosong tidak lagi ditolak sebagai ">0"', async () => {
     const bidang = fields(await res.json());
     assert.ok(bidang.includes('siloTujuanId'), `harus menuntut siloTujuanId, dapat: ${bidang}`);
     assert.ok(!bidang.includes('tankId'), `tankId tak boleh ditolak, dapat: ${bidang}`);
+  });
+});
+
+test('batch MANUAL: waktu wajib di setiap baris transfer', async () => {
+  await denganServer(async (port) => {
+    const res = await kirimTransferBatch(port, {
+      modeBatch: 'MANUAL',
+      baris: [
+        {
+          trfTime: '2026-09-10T12:00:00+07:00',
+          siloAsalId: 2,
+          jenis: 'PEMAKAIAN PRODUKSI',
+          volumeLtr: 200,
+          tankId: 1,
+          batchPrefix: 'HRC',
+          batchNomor: 1,
+        },
+        {
+          siloAsalId: 3,
+          jenis: 'PEMAKAIAN PRODUKSI',
+          volumeLtr: 200,
+          tankId: 1,
+          batchPrefix: 'HRC',
+          batchNomor: 2,
+        },
+      ],
+    });
+
+    assert.equal(res.status, 400);
+    assert.deepEqual(fields(await res.json()), ['baris.1.trfTime']);
+  });
+});
+
+test('batch SAMA: waktu bersama wajib di tingkat request', async () => {
+  await denganServer(async (port) => {
+    const res = await kirimTransferBatch(port, {
+      modeBatch: 'SAMA',
+      batchBersama: { batchPrefix: 'HRC', batchNomor: 1 },
+      baris: [
+        {
+          siloAsalId: 2,
+          jenis: 'PEMAKAIAN PRODUKSI',
+          volumeLtr: 200,
+          tankId: 1,
+        },
+      ],
+    });
+
+    assert.equal(res.status, 400);
+    assert.deepEqual(fields(await res.json()), ['trfTime']);
   });
 });

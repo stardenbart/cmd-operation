@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import { batasiBatchPadaSiklus, rekonstruksiAnchorSilo } from './standingSilo.js';
+import { batasiBatchPadaSiklus, rekonstruksiAnchorSilo } from '../src/services/standingSilo.js';
 
 const T = (nilai) => new Date(nilai);
 

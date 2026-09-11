@@ -55,7 +55,11 @@ function KepalaSilo({ s }) {
         <div>
           <div className="angka-besar">{fmt(s.vol_tersedia_toleransi_ltr)} L</div>
           <div className="label">
-            masih dapat diterima · toleransi {fmt(s.toleransi_ltr)} L
+            {/* toleransi_ltr sudah nilai EFEKTIF dari v_silo_volume (migrasi
+                026) — 0 saat switch-nya dimatikan di Master Data. Klausanya
+                disembunyikan sepenuhnya di sini, bukan ditulis "toleransi 0 L". */}
+            masih dapat diterima
+            {Number(s.toleransi_ltr) > 0 && ` · toleransi ${fmt(s.toleransi_ltr)} L`}
           </div>
         </div>
         <div>

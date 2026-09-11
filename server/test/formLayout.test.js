@@ -19,7 +19,7 @@ import {
   kapasitasTransferPerSilo,
   tataLetakUntuk,
   URUTAN_SILO_FORM,
-} from './formLayout.js';
+} from '../src/services/formLayout.js';
 
 /** Alamat A1 dari koordinat, supaya kegagalan uji terbaca sebagai sel. */
 const alamat = ({ baris, kolom }) => `${keHuruf(kolom)}${baris}`;

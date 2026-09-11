@@ -19,7 +19,15 @@ export default function Receiving() {
   const simpan = useMutation({
     mutationFn: (body) => api.post('/receiving', body),
     onSuccess: (res) => {
-      setSukses(`${res.data.kode} tersimpan. ${fmt(res.data.qty_ltr)} L masuk buffer.`);
+      const d = res.data;
+      if (d.is_gantung) {
+        const kosongLabel = [];
+        if (d.berat_jenis === null) kosongLabel.push('Berat Jenis');
+        if (d.nilai_ts === null) kosongLabel.push('Total Solid');
+        setSukses(`${d.kode} tersimpan, masih perlu: ${kosongLabel.join(', ')}. Lengkapi lewat Data List.`);
+      } else {
+        setSukses(`${d.kode} tersimpan. ${fmt(d.qty_ltr)} L masuk buffer.`);
+      }
       setF(kosong);
       qc.invalidateQueries({ queryKey: ['silos'] });
       qc.invalidateQueries({ queryKey: ['receiving'] });
@@ -28,9 +36,12 @@ export default function Receiving() {
 
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
-  // BR-03 — pratinjau konversi, dibulatkan ke bawah persis seperti server
+  // BR-03 — pratinjau konversi, dibulatkan ke bawah persis seperti server.
+  // Berat Jenis boleh kosong (dilengkapi belakangan) — volume belum dapat
+  // dihitung sampai nilainya tersedia, beda dengan "belum ada input sama sekali".
   const kg = parseFloat(String(f.qtyKg).replace(',', '.'));
   const bj = parseFloat(String(f.beratJenis).replace(',', '.'));
+  const beratJenisKosong = f.beratJenis === '';
   const liter = kg > 0 && bj > 0 ? Math.floor(kg / bj) : null;
 
   return (
@@ -76,11 +87,11 @@ export default function Receiving() {
             <input className="angka-input" inputMode="decimal" value={f.qtyKg} onChange={set('qtyKg')} placeholder="20296" required />
           </Field>
 
-          <Field label="Berat jenis" wajib bantuan="Titik atau koma sama saja">
-            <input className="angka-input" inputMode="decimal" value={f.beratJenis} onChange={set('beratJenis')} placeholder="1,025" required />
+          <Field label="Berat jenis" bantuan="Boleh dikosongkan dulu — masuk Perlu dilengkapi">
+            <input className="angka-input" inputMode="decimal" value={f.beratJenis} onChange={set('beratJenis')} placeholder="1,025" />
           </Field>
 
-          <Field label="Total solid" bantuan="Opsional">
+          <Field label="Total solid" bantuan="Boleh dikosongkan dulu — masuk Perlu dilengkapi">
             <input className="angka-input" inputMode="decimal" value={f.nilaiTs} onChange={set('nilaiTs')} placeholder="12,5" />
           </Field>
 
@@ -91,7 +102,9 @@ export default function Receiving() {
 
         <div className="pecahan-total">
           <span className="label">Volume tercatat</span>
-          <b className="angka" style={{ fontSize: 20 }}>{liter === null ? '-' : `${fmt(liter)} L`}</b>
+          <b className="angka" style={{ fontSize: 20 }}>
+            {liter !== null ? `${fmt(liter)} L` : beratJenisKosong && kg > 0 ? 'Belum dapat dihitung' : '-'}
+          </b>
           <span className="bantuan">kg ÷ berat jenis, dibulatkan ke bawah</span>
         </div>
 
