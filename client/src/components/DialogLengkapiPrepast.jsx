@@ -75,12 +75,16 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   const ubahTambahan = (i, k, v) =>
     setPecahanTambahan(pecahanTambahan.map((p, idx) => (idx === i ? { ...p, [k]: v } : p)));
 
-  const primaryTerkunci = data?.data?.volumeLtr != null;
   const sisaIndukLtr = data?.data?.sisaIndukLtr ?? null;
-  // Volume record utama baru ikut "memperebutkan" sisa induk selama belum
-  // terkunci — begitu sudah terkunci, potongannya sudah tercermin di
-  // sisaIndukLtr itu sendiri (dikurangi saat pelengkapan sebelumnya).
-  const volumeUtamaDiketik = !primaryTerkunci ? (angka(nilai.volumeLtr) || 0) : 0;
+  // Volume record utama yang SUDAH tersimpan sebelumnya (null bila belum
+  // pernah). Dipakai untuk menghitung DELTA, bukan nilai penuh — sisaIndukLtr
+  // dari server sudah memotong angka lama ini, jadi yang "memperebutkan" sisa
+  // di pratinjau ini cuma selisih antara yang sedang diketik dan yang sudah
+  // tersimpan (0 kalau tidak diubah sama sekali).
+  const volumeAsliLtr = data?.data?.volumeLtr != null ? Number(data.data.volumeLtr) : null;
+  const volumeUtamaDiketik = volumeAsliLtr != null
+    ? (angka(nilai.volumeLtr) || 0) - volumeAsliLtr
+    : (angka(nilai.volumeLtr) || 0);
   const totalTambahan = pecahanTambahan.reduce((s, p) => s + (angka(p.volumeLtr) || 0), 0);
   const totalDialokasikan = volumeUtamaDiketik + totalTambahan;
   const sisaAlokasi = sisaIndukLtr === null ? null
@@ -90,7 +94,7 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   // muncul lagi di baris berikutnya — sama seperti form Prepast baru (FR-29.5).
   const siloTersedia = (idx) => {
     const dipakai = new Set([
-      primaryTerkunci ? null : nilai.siloId,
+      nilai.siloId,
       ...pecahanTambahan.filter((_, i) => i !== idx).map((p) => p.siloId),
     ].filter((v) => v !== '' && v != null).map(String));
     return (data?.data?.siloTujuan ?? []).filter((s) => !dipakai.has(String(s.silo_id)));
@@ -158,8 +162,9 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   }
 
   const kosong = data?.data?.fieldKosong ?? [];
-  const pratinjauUtama = !isLoading && !primaryTerkunci
-    ? pratinjauKapasitas(nilai.siloId, nilai.volumeLtr) : null;
+  // Berlaku juga saat Volume sudah pernah tersimpan — sekarang boleh diedit
+  // ulang, jadi pratinjau kapasitasnya tetap relevan untuk nilai barunya.
+  const pratinjauUtama = !isLoading ? pratinjauKapasitas(nilai.siloId, nilai.volumeLtr) : null;
 
   return (
     <div className="kartu tumpuk">
@@ -209,14 +214,20 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
             label="Volume (L)"
             bantuan={data?.data?.bjIndukBelumDiisi
               ? `Menunggu Berat Jenis Receiving ${data.data.indukKode}`
-              : 'Boleh tetap kosong; record masih masuk Perlu dilengkapi'}
+              : data?.data?.volumeLtr != null
+                ? 'Sudah tersimpan — boleh diubah selama record masih Gantung/Pending'
+                : 'Boleh tetap kosong; record masih masuk Perlu dilengkapi'}
           >
             <input
               className="angka-input"
               inputMode="decimal"
               value={nilai.volumeLtr ?? ''}
               onChange={set('volumeLtr')}
-              disabled={data?.data?.volumeLtr != null || data?.data?.bjIndukBelumDiisi}
+              // Silo tetap terkunci begitu tersimpan (beda tangki, beda anchor
+              // standing time) — tapi Volume boleh diganti selama Berat Jenis
+              // induknya sudah diketahui, selama record masih Gantung/Pending
+              // (dijamin server, bukan di sini).
+              disabled={data?.data?.bjIndukBelumDiisi}
             />
           </Field>
           <Field label="Mulai" wajib>
@@ -239,11 +250,17 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
 
       {pratinjauUtama && pesanPratinjau(pratinjauUtama)}
 
-      {/* Silo tambahan hanya bermakna selama Volume record utama masih bisa
-          diisi di sini — begitu sudah terkunci, sisa batch induk sudah
-          diserap record ini dan menambah silo di sini tidak lagi relevan
-          untuk alur pelengkapan yang sedang berjalan. */}
-      {!isLoading && !primaryTerkunci && !data?.data?.bjIndukBelumDiisi && (
+      {/* Silo tambahan TIDAK digerbang oleh sisaIndukLtr saat ini — itu
+          angka STATIS dari server, sedangkan Volume record utama sekarang
+          boleh DITURUNKAN di form ini juga, yang baru membebaskan ruang
+          setelah disimpan. Kalau digerbang begitu, kasus paling umum justru
+          hilang: batch yang sudah habis teralokasi ke SATU silo (sisaIndukLtr
+          = 0) tapi Volume-nya mau dikurangi supaya sisanya dipecah ke silo
+          lain — "Sisakan ke baris akhir" & ringkasan Teralokasi di bawah
+          sudah menghitung ruang yang SUNGGUH tersedia secara live (termasuk
+          pengurangan yang sedang diketik), jadi cukup Berat Jenis induk yang
+          jadi syarat tampil. */}
+      {!isLoading && !data?.data?.bjIndukBelumDiisi && (
         <div className="tumpuk" style={{ gap: 10 }}>
           <div className="kartu__kepala">
             <h3 style={{ fontSize: 14, margin: 0 }}>Silo tambahan</h3>

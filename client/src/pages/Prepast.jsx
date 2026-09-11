@@ -263,11 +263,21 @@ export default function Prepast() {
                 onChange={(e) => {
                   setKontinu(e.target.checked);
                   if (e.target.checked) {
-                    setProses((lama) => ({ ...lama, prepastStart: saranStart }));
+                    // Cuma saran — bukan patokan. Nilai proses (Flowrate, Temp
+                    // after heater, Temp output) langsung terisi dari record
+                    // sebelumnya supaya tidak perlu ketik ulang bila memang
+                    // sama, tapi tetap bebas diubah sebelum submit.
+                    setProses((lama) => ({
+                      ...lama,
+                      prepastStart: saranStart,
+                      flowrate: sebelumnya.flowrate ?? lama.flowrate,
+                      tempAfterHeater: sebelumnya.tempAfterHeater ?? lama.tempAfterHeater,
+                      tempOutput: sebelumnya.tempOutput ?? lama.tempOutput,
+                    }));
                   }
                 }}
               />
-              Proses Kontinu — gunakan Waktu Selesai record Prepast terakhir sebagai Waktu Mulai
+              Proses Kontinu — sarankan Waktu Mulai, Flowrate, Temp After Heater &amp; Temp Output dari record Prepast terakhir
             </label>
         </div>
 

@@ -45,3 +45,4 @@ export function statusKelengkapanPrepast(nilai) {
 export function prepastPerluDilengkapi(nilai) {
   return statusKelengkapanPrepast(nilai).isGantung;
 }
+

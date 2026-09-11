@@ -477,14 +477,14 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       );
     }
 
-    if (lama.vol_prepast_ltr != null
+    // Volume yang sudah tersimpan BOLEH diganti lewat pelengkapan — selama
+    // record masih Gantung/Pending (dijamin oleh pastikanBolehLengkapi() di
+    // atas, sebelum Approved sama sekali). Silo TIDAK ikut — mengganti silo
+    // berarti anchor standing time & kapasitas tangki yang berbeda,
+    // jauh lebih rawan daripada sekadar angka volume yang keliru ketik.
+    const volumeBerubah = lama.vol_prepast_ltr != null
       && perubahan.volumeLtr !== undefined
-      && Number(perubahan.volumeLtr) !== Number(lama.vol_prepast_ltr)) {
-      throw new BusinessError(
-        'VOLUME_ALREADY_SET',
-        'Volume yang sudah tersimpan tidak dapat diganti lewat pelengkapan. Gunakan koreksi.',
-      );
-    }
+      && Number(perubahan.volumeLtr) !== Number(lama.vol_prepast_ltr);
 
     if (!prepastStart) {
       throw new BusinessError('PREPAST_START_REQUIRED', 'Waktu Mulai wajib diisi.');
@@ -498,10 +498,16 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
     const volumeDitambahkan = lama.vol_prepast_ltr == null && volumeLtr != null;
     const siloDitambahkan = lama.silo_tujuan_id == null && siloId != null;
     let induk = null;
+    // Hanya relevan saat volumeBerubah — berapa liter dari record ini yang
+    // SUDAH ditarik keluar (mis. Pindah Silo memakai FIFO, yang tidak
+    // menunggu Approved). Volume baru tidak boleh turun di bawah ini; kalau
+    // diizinkan, qty_remaining_ltr record ini akan jadi negatif — mengklaim
+    // sisa yang secara fisik sudah tidak ada di silo.
+    let konsumsiLtr = 0;
 
-    // Volume yang baru diketahui baru sekarang mengambil stok dari buffer.
+    // Volume yang baru diketahui/berubah mengambil-ulang stok dari buffer.
     // Receiving dikunci agar dua draft tidak menghabiskan sisa yang sama.
-    if (volumeDitambahkan) {
+    if (volumeDitambahkan || volumeBerubah) {
       const [barisInduk] = await conn.query(
         'SELECT id, kode, qty_remaining_ltr FROM receiving WHERE id = ? FOR UPDATE',
         [lama.receiving_id],
@@ -521,14 +527,26 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
             'Receiving tersebut terlebih dahulu sebelum mengisi Volume Prepast ini.',
         );
       }
+
+      if (volumeBerubah) {
+        konsumsiLtr = Number(lama.vol_prepast_ltr) - Number(lama.qty_remaining_ltr);
+        if (Number(volumeLtr) < konsumsiLtr) {
+          throw new BusinessError(
+            'PREPAST_VOLUME_SUDAH_DITRANSFER',
+            `Volume tidak dapat diturunkan di bawah ${konsumsiLtr} L — sejumlah itu dari ` +
+              `record ini sudah ditransfer keluar dari silo.`,
+            { konsumsiLtr },
+          );
+        }
+      }
     }
 
-    // Silo perlu dikunci saat baru dipilih atau ketika volume baru ditambahkan
-    // ke silo yang telah dipilih sebelumnya. Kapasitas divalidasi hanya ketika
-    // volume sudah tersedia.
+    // Silo perlu dikunci saat baru dipilih, saat volume baru ditambahkan ke
+    // silo yang telah dipilih sebelumnya, atau saat volumenya diubah.
+    // Kapasitas divalidasi hanya ketika volume sudah tersedia.
     let kapasitas = new Map();
     let batasKeras = new Map();
-    if (siloId != null && (siloDitambahkan || volumeDitambahkan)) {
+    if (siloId != null && (siloDitambahkan || volumeDitambahkan || volumeBerubah)) {
       const [siloBaris] = await conn.query(
         'SELECT id FROM silo WHERE id = ? AND is_buffer = FALSE AND is_active = TRUE FOR UPDATE',
         [siloId],
@@ -543,6 +561,16 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       );
       kapasitas = new Map(kapasitasBaris.map((s) => [s.silo_id, Number(s.vol_tersedia_ltr)]));
       batasKeras = new Map(kapasitasBaris.map((s) => [s.silo_id, Number(s.vol_tersedia_toleransi_ltr)]));
+
+      // Sisa yang dibaca dari VIEW sudah menghitung volume LAMA record ini
+      // sebagai bagian dari isi silo. Kembalikan dulu porsi lama itu supaya
+      // perbandingan terhadap volume BARU adil — bukan seolah silo sudah
+      // penuh oleh volume yang justru sedang digantikan.
+      if (volumeBerubah) {
+        const semula = Number(lama.vol_prepast_ltr);
+        kapasitas.set(siloId, (kapasitas.get(siloId) ?? 0) + semula);
+        batasKeras.set(siloId, (batasKeras.get(siloId) ?? 0) + semula);
+      }
     }
 
     // BR-24 — TRUE bila volume ini melampaui bahkan batas keras (kapasitas +
@@ -551,11 +579,18 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
     // pelengkapan ini (mis. hanya mengisi flowrate), nilai lama dipertahankan
     // apa adanya — bukan direset ke false begitu saja.
     let melampauiKapasitas = Boolean(lama.melampaui_kapasitas);
-    if (volumeLtr != null && (siloDitambahkan || volumeDitambahkan)) {
+    // Sisa yang tersedia UNTUK BARIS INI: sisa Receiving apa adanya untuk
+    // volume yang baru pertama kali diisi, tapi sisa + volume LAMA record
+    // ini untuk volume yang sedang DIGANTI — sama seperti kapasitas silo di
+    // atas, porsi lama dikembalikan dulu sebelum dibandingkan dengan yang baru.
+    if (volumeLtr != null && (siloDitambahkan || volumeDitambahkan || volumeBerubah)) {
+      const sisaUntukValidasi = volumeBerubah
+        ? Number(induk.qty_remaining_ltr) + Number(lama.vol_prepast_ltr)
+        : volumeDitambahkan ? Number(induk.qty_remaining_ltr) : Number(volumeLtr);
       try {
         const hasilValidasi = validasiPecahan(
           [{ siloId: siloId == null ? null : Number(siloId), volumeLtr: Number(volumeLtr) }],
-          volumeDitambahkan ? Number(induk.qty_remaining_ltr) : Number(volumeLtr),
+          sisaUntukValidasi,
           kapasitas,
           batasKeras,
         );
@@ -567,6 +602,22 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
 
     if (volumeDitambahkan) {
       const sisaBaru = Number(induk.qty_remaining_ltr) - Number(volumeLtr);
+      await conn.query(
+        `UPDATE receiving
+            SET qty_remaining_ltr = ?, buffer_status = ?, status_fifo = ?
+          WHERE id = ?`,
+        [
+          sisaBaru,
+          sisaBaru <= 0 ? 'COMPLETED' : 'IN_PREPAST',
+          sisaBaru <= 0 ? 'CLOSED' : 'ACTIVE',
+          induk.id,
+        ],
+      );
+    } else if (volumeBerubah) {
+      // Reverse-lalu-terapkan: kembalikan volume lama ke sisa Receiving,
+      // baru kurangi dengan volume baru — dalam satu langkah supaya tidak
+      // pernah ada momen di mana sisa Receiving salah, sekalipun sesaat.
+      const sisaBaru = Number(induk.qty_remaining_ltr) + Number(lama.vol_prepast_ltr) - Number(volumeLtr);
       await conn.query(
         `UPDATE receiving
             SET qty_remaining_ltr = ?, buffer_status = ?, status_fifo = ?
@@ -647,7 +698,14 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       [
         siloId,
         volumeLtr,
-        volumeDitambahkan ? volumeLtr : lama.qty_remaining_ltr,
+        // Volume baru pertama kali diisi: sisanya = volume itu sendiri, sama
+        // seperti record baru dibuat. Volume DIGANTI: sisanya = volume baru
+        // dikurangi yang sudah terlanjur ditransfer keluar (konsumsiLtr) —
+        // bukan disamakan lagi dengan volume baru begitu saja, atau liter
+        // yang sudah keluar silo akan terhitung dua kali.
+        volumeDitambahkan ? volumeLtr
+          : volumeBerubah ? Number(volumeLtr) - konsumsiLtr
+          : lama.qty_remaining_ltr,
         melampauiKapasitas,
         prepastStart, finishFinal, flowrate, tempAfterHeater, tempOutput,
         kelengkapan.isGantung,
