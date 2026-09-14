@@ -47,6 +47,13 @@ export default function Monitoring() {
       if (d.diLuarRentang.length > 0) {
         pesan += ` pH di luar rentang pada ${d.diLuarRentang.map((x) => `${x.siloName} (${x.ph})`).join(', ')}.`;
       }
+      // BR-10 — tetap tersimpan (tidak ditolak), cuma diberi tahu di sini
+      // supaya celah jadwal tidak lewat tanpa disadari operator sendiri.
+      if (d.lewatJadwal.length > 0) {
+        pesan += ` Perhatian — lewat jadwal: ${
+          d.lewatJadwal.map((x) => `${x.siloName} (+${x.jamSejakCekSebelumnya} jam dari ambang ${x.ambangJam} jam)`).join(', ')
+        }.`;
+      }
       setSukses(pesan);
       setIsian({});
       qc.invalidateQueries({ queryKey: ['silos'] });
@@ -129,7 +136,7 @@ export default function Monitoring() {
               const ph = isian[s.silo_id]?.ph;
               const phLuar = ph && (angka(ph) < rentangPh.min || angka(ph) > rentangPh.maks);
               return (
-                <tr key={s.silo_id} style={{ opacity: s.perluDicek ? 1 : 0.5 }}>
+                <tr key={s.silo_id} style={{ opacity: s.volumeKosongSaatIni ? 0.6 : 1 }}>
                   <td>
                     <div style={{ fontWeight: 600 }}>{s.silo_name}</div>
                     {s.supplierList && (
@@ -150,7 +157,6 @@ export default function Monitoring() {
                       value={ph ?? ''}
                       onChange={(e) => ubah(s.silo_id, 'ph', e.target.value)}
                       placeholder="6,7"
-                      disabled={!s.perluDicek}
                       style={phLuar ? { borderColor: 'var(--status-critical)' } : undefined}
                     />
                   </td>
@@ -161,7 +167,6 @@ export default function Monitoring() {
                       value={isian[s.silo_id]?.temp ?? ''}
                       onChange={(e) => ubah(s.silo_id, 'temp', e.target.value)}
                       placeholder="4,5"
-                      disabled={!s.perluDicek}
                     />
                   </td>
                 </tr>
@@ -169,6 +174,17 @@ export default function Monitoring() {
             })}
           </tbody>
         </table>
+
+        {/* Volume kosong SEKARANG tidak lagi mengunci input — operator yang
+            mencatat jam mundur (mis. jam 9 tadi) tahu kondisi fisiknya saat
+            itu lebih baik daripada angka volume saat ini. Sekadar pengingat,
+            bukan penolakan. */}
+        {silos.some((s) => s.volumeKosongSaatIni && isian[s.silo_id]?.ph) && (
+          <div className="pesan pesan--info">
+            Volume beberapa silo yang diisi menunjukkan 0 L saat ini — pastikan waktu cek yang
+            dipilih di atas sudah sesuai kondisi fisik silo pada saat itu.
+          </div>
+        )}
 
         {phDiLuar.length > 0 && (
           <div className="pesan pesan--waspada">
@@ -178,7 +194,7 @@ export default function Monitoring() {
         )}
 
         <div className="baris">
-          <span className="label">{terisi.length} dari {silos.filter((s) => s.perluDicek).length} silo terisi</span>
+          <span className="label">{terisi.length} dari {silos.length} silo terisi</span>
           <button className="btn btn--utama dorong" disabled={simpan.isPending || terisi.length === 0}>
             {simpan.isPending ? 'Menyimpan…' : `Simpan ronde (${terisi.length} silo)`}
           </button>
