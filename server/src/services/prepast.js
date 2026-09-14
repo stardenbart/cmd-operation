@@ -110,6 +110,9 @@ export async function buat(masukan, aktor, ip) {
     pecahan,
     prepastStart,
     prepastFinish,
+    // Tanggal Selesai yang sempat diketik sebelum jamnya diisi (BR-16) —
+    // pengingat tampilan, lihat catatan di dekat INSERT di bawah.
+    prepastFinishDraftTanggal,
     flowrate,
     tempAfterHeater,
     tempOutput,
@@ -242,6 +245,12 @@ export async function buat(masukan, aktor, ip) {
       kontinuitas = { sebelumnya, tersambung: Boolean(kontinu && tersambung) };
     }
 
+    // BR-16 — draft tanggal Selesai hanya bermakna selama Selesai sungguhan
+    // BELUM tersimpan. Begitu finishFinal ada (tanggal+jam lengkap), draft
+    // tidak diperlukan lagi — disimpan NULL supaya tidak pernah menyimpang
+    // dari sumber kebenarannya.
+    const draftTanggalUntukDisimpan = finishFinal ? null : (prepastFinishDraftTanggal ?? null);
+
     for (const p of hasilValidasi.pecahan) {
       const kelengkapanBaris = statusKelengkapanPrepast({
         siloId: p.siloId,
@@ -258,18 +267,20 @@ export async function buat(masukan, aktor, ip) {
         `INSERT INTO prepast_record
            (kode, receiving_id, supplier_id, silo_tujuan_id,
             vol_prepast_ltr, qty_remaining_ltr, melampaui_kapasitas,
-            prepast_start, prepast_finish, continuity_previous_id,
+            prepast_start, prepast_finish, prepast_finish_draft_tanggal,
+            continuity_previous_id,
             continuity_override, continuity_override_reason, flowrate_pst,
             temp_after_heater, temp_output_prd, nilai_ts,
             operator_id, status_approval, status_fifo, cmd_source,
             is_gantung, remarks)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                  'Pending Approval', 'ACTIVE', 'CMD1', ?, ?)`,
         [
           kode, receivingId, induk.sup_id, p.siloId,
           p.volumeLtr, p.volumeLtr, p.melebihiBatasKeras,
           prepastStart,
           finishFinal,
+          draftTanggalUntukDisimpan,
           kontinuitas.tersambung ? kontinuitas.sebelumnya?.id ?? null : null,
           false,
           null,
@@ -404,6 +415,13 @@ function bentukKonteksKelengkapan(record) {
     volumeLtr: record.vol_prepast_ltr,
     prepastStart: record.prepast_start,
     prepastFinish: record.prepast_finish,
+    // BR-16 — tanggal Selesai yang sempat diketik sebelum jamnya diisi.
+    // Kolom DATE kembali sebagai objek Date (tengah malam UTC) dari mysql2;
+    // diratakan ke "YYYY-MM-DD" di sini supaya langsung cocok dengan
+    // <input type="date">, tanpa klien perlu tahu representasi drivernya.
+    prepastFinishDraftTanggal: record.prepast_finish_draft_tanggal
+      ? record.prepast_finish_draft_tanggal.toISOString().slice(0, 10)
+      : null,
     flowrate: record.flowrate_pst,
     tempAfterHeater: record.temp_after_heater,
     tempOutput: record.temp_output_prd,
@@ -494,6 +512,14 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       prepastStart, finishMasukan, perubahan.konfirmasiRollover ?? false,
     );
     validasiOprp(tempAfterHeater, perubahan.konfirmasiOprp ?? false);
+
+    // BR-16 — draft tanggal Selesai. Bermakna hanya selama Selesai sungguhan
+    // (finishFinal) belum ada; begitu ada, draft tidak diperlukan lagi.
+    // Tidak dikirim sama sekali berarti pertahankan draft lama — pola yang
+    // sama seperti field lain di fungsi ini.
+    const draftTanggalBaru = finishFinal
+      ? null
+      : (perubahan.prepastFinishDraftTanggal ?? lama.prepast_finish_draft_tanggal);
 
     const volumeDitambahkan = lama.vol_prepast_ltr == null && volumeLtr != null;
     const siloDitambahkan = lama.silo_tujuan_id == null && siloId != null;
@@ -690,7 +716,8 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
       `UPDATE prepast_record
           SET silo_tujuan_id = ?, vol_prepast_ltr = ?, qty_remaining_ltr = ?,
               melampaui_kapasitas = ?,
-              prepast_start = ?, prepast_finish = ?, flowrate_pst = ?,
+              prepast_start = ?, prepast_finish = ?, prepast_finish_draft_tanggal = ?,
+              flowrate_pst = ?,
               temp_after_heater = ?, temp_output_prd = ?, is_gantung = ?,
               continuity_previous_id = ?, continuity_override = FALSE,
               continuity_override_reason = NULL
@@ -707,7 +734,7 @@ export async function lengkapiDraft(id, perubahan, aktor, ip) {
           : volumeBerubah ? Number(volumeLtr) - konsumsiLtr
           : lama.qty_remaining_ltr,
         melampauiKapasitas,
-        prepastStart, finishFinal, flowrate, tempAfterHeater, tempOutput,
+        prepastStart, finishFinal, draftTanggalBaru, flowrate, tempAfterHeater, tempOutput,
         kelengkapan.isGantung,
         continuityPreviousIdBaru,
         id,

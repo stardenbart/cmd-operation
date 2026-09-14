@@ -33,8 +33,14 @@ createRoot(document.getElementById('root')).render(
  * Daftarkan service worker PWA. Hanya di konteks aman (HTTPS / localhost) -
  * di HTTP polos registrasi tidak diizinkan peramban, jadi dijaga agar tidak
  * melempar. Kegagalan registrasi tidak boleh mengganggu aplikasi.
+ *
+ * TIDAK didaftarkan saat `npm run dev` (import.meta.env.DEV): sw.js meng-cache
+ * aset statik cache-first, sehingga perubahan kode saat dev terasa "tidak
+ * muncul" walau sudah di-refresh — bukan basi di server, basi di cache
+ * service worker. Build produksi (`npm run build`) tidak terpengaruh sama
+ * sekali, itu satu-satunya tempat PWA-nya perlu benar-benar aktif.
  */
-if ('serviceWorker' in navigator && window.isSecureContext) {
+if ('serviceWorker' in navigator && window.isSecureContext && !import.meta.env.DEV) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => { /* abaikan */ });
   });

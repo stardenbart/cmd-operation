@@ -26,8 +26,13 @@ export default function Prepast() {
   const qc = useQueryClient();
   const [batch, setBatch] = useState(null);
   const [pecahan, setPecahan] = useState([{ siloId: '', volumeLtr: '' }]);
+  // Selesai disimpan sebagai TANGGAL dan JAM terpisah, bukan satu
+  // datetime-local — supaya tanggalnya bisa disarankan dari Mulai sementara
+  // jamnya benar-benar kosong (bukan dipalsukan 00.00), sesuatu yang tidak
+  // bisa direpresentasikan oleh satu <input type="datetime-local"> saja.
   const [proses, setProses] = useState({
-    prepastStart: '', prepastFinish: '', flowrate: '', tempAfterHeater: '', tempOutput: '', remarks: '',
+    prepastStart: '', prepastFinishTanggal: '', prepastFinishJam: '',
+    flowrate: '', tempAfterHeater: '', tempOutput: '', remarks: '',
   });
   const [sukses, setSukses] = useState(null);
   const [kontinu, setKontinu] = useState(false);
@@ -82,7 +87,10 @@ export default function Prepast() {
       );
       setBatch(null);
       setPecahan([{ siloId: '', volumeLtr: '' }]);
-      setProses({ prepastStart: '', prepastFinish: '', flowrate: '', tempAfterHeater: '', tempOutput: '', remarks: '' });
+      setProses({
+        prepastStart: '', prepastFinishTanggal: '', prepastFinishJam: '',
+        flowrate: '', tempAfterHeater: '', tempOutput: '', remarks: '',
+      });
       setKontinu(false);
       qc.invalidateQueries({ queryKey: ['silos'] });
       qc.invalidateQueries({ queryKey: ['prepast'] });
@@ -91,7 +99,15 @@ export default function Prepast() {
 
   const setP = (k) => (e) => {
     const nilai = e.target.value;
-    setProses({ ...proses, [k]: nilai });
+    const perubahan = { [k]: nilai };
+    // Tanggal Selesai ikut Mulai — sekadar memudahkan, bukan patokan nilai
+    // aslinya. Jam Selesai TIDAK ikut sama sekali (tetap kosong, field
+    // terpisah) — operator mengisi sendiri. Tidak menimpa tanggal Selesai
+    // yang sudah pernah diisi sendiri oleh operator.
+    if (k === 'prepastStart' && !proses.prepastFinishTanggal && nilai.length >= 10) {
+      perubahan.prepastFinishTanggal = nilai.slice(0, 10);
+    }
+    setProses({ ...proses, ...perubahan });
     if (k === 'prepastStart' && kontinu && nilai !== saranStart) setKontinu(false);
   };
 
@@ -126,9 +142,14 @@ export default function Prepast() {
   function kirim(e) {
     e.preventDefault();
     setSukses(null);
+    // Digabung hanya kalau DUA-DUANYA terisi — tanggal saja tanpa jam bukan
+    // waktu yang bisa dikirim (persis alasan keduanya field terpisah).
+    const prepastFinish = (proses.prepastFinishTanggal && proses.prepastFinishJam)
+      ? `${proses.prepastFinishTanggal}T${proses.prepastFinishJam}`
+      : '';
     let konfirmasiRollover = false;
-    if (proses.prepastFinish && proses.prepastStart
-      && proses.prepastFinish <= proses.prepastStart) {
+    if (prepastFinish && proses.prepastStart
+      && prepastFinish <= proses.prepastStart) {
       konfirmasiRollover = window.confirm(
         'Waktu selesai lebih awal dari waktu mulai. Konfirmasi bahwa proses melewati tengah malam.',
       );
@@ -145,12 +166,16 @@ export default function Prepast() {
 
     // Waktu Selesai dan Silo Tujuan yang kosong dikirim sebagai tidak-ada:
     // itulah yang membuat record MENGGANTUNG, bukan ditolak validasi.
-    const { prepastFinish, ...prosesTanpaFinish } = proses;
+    const { prepastFinishTanggal, prepastFinishJam, ...prosesTanpaFinish } = proses;
     simpan.mutate({
       receivingId: batch.id,
       pecahan: pecahanSiap,
       ...prosesTanpaFinish,
       ...(prepastFinish ? { prepastFinish } : {}),
+      // BR-16 — Tanggal Selesai yang sempat diisi tapi Jam-nya belum. Tanpa
+      // ini, tanggal itu hanya ada di layar dan hilang begitu record
+      // tersimpan — lihat prepastFinishDraftTanggal di prepast.js.
+      ...(!prepastFinish && prepastFinishTanggal ? { prepastFinishDraftTanggal: prepastFinishTanggal } : {}),
       konfirmasiRollover,
       konfirmasiOprp,
       kontinu,
@@ -226,9 +251,24 @@ export default function Prepast() {
           <Field label="Mulai" wajib>
             <input type="datetime-local" value={proses.prepastStart} onChange={setP('prepastStart')} required />
           </Field>
-          <Field label="Selesai" bantuan="Boleh dikosongkan dulu - record menggantung sampai dilengkapi">
-            <input type="datetime-local" value={proses.prepastFinish} onChange={setP('prepastFinish')} />
-          </Field>
+          <div style={{ gridColumn: 'span 2' }}>
+            <Field label="Selesai" bantuan="Tanggal ikut Mulai, jam diisi sendiri - atau kosongkan dulu, record menggantung sampai dilengkapi">
+              <div className="baris" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  type="date"
+                  value={proses.prepastFinishTanggal}
+                  onChange={setP('prepastFinishTanggal')}
+                  style={{ flex: 1, minWidth: 150 }}
+                />
+                <input
+                  type="time"
+                  value={proses.prepastFinishJam}
+                  onChange={setP('prepastFinishJam')}
+                  style={{ flex: 1, minWidth: 130 }}
+                />
+              </div>
+            </Field>
+          </div>
           <Field label="Flowrate" bantuan="Boleh dikosongkan dulu - record menggantung sampai dilengkapi">
             <input className="angka-input" inputMode="decimal" value={proses.flowrate} onChange={setP('flowrate')} placeholder="5,2" />
           </Field>
@@ -270,6 +310,14 @@ export default function Prepast() {
                     setProses((lama) => ({
                       ...lama,
                       prepastStart: saranStart,
+                      // Tanggal Selesai ikut Mulai (jamnya tetap kosong) — sama
+                      // seperti saat Mulai diketik manual. Jalur checkbox ini
+                      // mengisi Mulai lewat cara berbeda dari pengetikan biasa,
+                      // jadi aturannya perlu diulang di sini juga, bukan cuma
+                      // di setP().
+                      prepastFinishTanggal: (!lama.prepastFinishTanggal && saranStart?.length >= 10)
+                        ? saranStart.slice(0, 10)
+                        : lama.prepastFinishTanggal,
                       flowrate: sebelumnya.flowrate ?? lama.flowrate,
                       tempAfterHeater: sebelumnya.tempAfterHeater ?? lama.tempAfterHeater,
                       tempOutput: sebelumnya.tempOutput ?? lama.tempOutput,

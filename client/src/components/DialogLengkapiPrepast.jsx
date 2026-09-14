@@ -31,11 +31,18 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   useEffect(() => {
     if (!data?.data) return;
     const d = data.data;
+    // Selesai disimpan sebagai TANGGAL dan JAM terpisah — sama seperti di
+    // Prepast.jsx — supaya tanggalnya bisa disarankan dari Mulai sementara
+    // jamnya benar-benar kosong, bukan dipalsukan.
+    const selesaiWib = isoKeInputWib(d.prepastFinish);
     setNilai({
       siloId: d.siloId ?? '',
       volumeLtr: d.volumeLtr ?? '',
       prepastStart: isoKeInputWib(d.prepastStart),
-      prepastFinish: isoKeInputWib(d.prepastFinish),
+      // BR-16 — kalau Selesai sungguhan belum ada, muat ulang tanggal yang
+      // sempat diketik sebelumnya (draft) supaya tidak hilang begitu saja.
+      prepastFinishTanggal: selesaiWib.slice(0, 10) || (d.prepastFinishDraftTanggal ?? ''),
+      prepastFinishJam: selesaiWib.slice(11, 16),
       flowrate: d.flowrate ?? '',
       tempAfterHeater: d.tempAfterHeater ?? '',
       tempOutput: d.tempOutput ?? '',
@@ -71,7 +78,18 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
     },
   });
 
-  const set = (key) => (e) => setNilai((lama) => ({ ...lama, [key]: e.target.value }));
+  const set = (key) => (e) => {
+    const nilaiBaru = e.target.value;
+    setNilai((lama) => {
+      const perubahan = { [key]: nilaiBaru };
+      // Tanggal Selesai ikut Mulai — sama seperti Prepast.jsx — jamnya tidak
+      // ikut sama sekali, dan tidak menimpa tanggal yang sudah diisi sendiri.
+      if (key === 'prepastStart' && !lama.prepastFinishTanggal && nilaiBaru.length >= 10) {
+        perubahan.prepastFinishTanggal = nilaiBaru.slice(0, 10);
+      }
+      return { ...lama, ...perubahan };
+    });
+  };
   const ubahTambahan = (i, k, v) =>
     setPecahanTambahan(pecahanTambahan.map((p, idx) => (idx === i ? { ...p, [k]: v } : p)));
 
@@ -126,9 +144,23 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   );
 
   function kirim() {
+    // Digabung hanya kalau DUA-DUANYA terisi — tanggal saja tanpa jam bukan
+    // waktu yang bisa dikirim (persis alasan keduanya field terpisah).
+    const prepastFinish = (nilai.prepastFinishTanggal && nilai.prepastFinishJam)
+      ? `${nilai.prepastFinishTanggal}T${nilai.prepastFinishJam}`
+      : '';
+
     const body = {};
     for (const [key, value] of Object.entries(nilai)) {
+      if (key === 'prepastFinishTanggal' || key === 'prepastFinishJam') continue;
       if (value !== '') body[key] = value;
+    }
+    if (prepastFinish) {
+      body.prepastFinish = prepastFinish;
+    } else if (nilai.prepastFinishTanggal) {
+      // BR-16 — Tanggal sudah diisi tapi Jam belum; simpan sebagai draft
+      // supaya tidak hilang saat dialog ini dibuka lagi nanti.
+      body.prepastFinishDraftTanggal = nilai.prepastFinishTanggal;
     }
 
     // Baris kosong sama sekali (belum diisi apa-apa) tidak dikirim — cuma
@@ -141,7 +173,7 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
       }));
     if (tambahanSiap.length > 0) body.pecahanTambahan = tambahanSiap;
 
-    if (nilai.prepastFinish && nilai.prepastStart && nilai.prepastFinish <= nilai.prepastStart) {
+    if (prepastFinish && nilai.prepastStart && prepastFinish <= nilai.prepastStart) {
       const setuju = window.confirm(
         'Waktu selesai lebih awal dari waktu mulai. Konfirmasi bahwa proses melewati tengah malam.',
       );
@@ -233,9 +265,24 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
           <Field label="Mulai" wajib>
             <input type="datetime-local" value={nilai.prepastStart ?? ''} onChange={set('prepastStart')} />
           </Field>
-          <Field label="Selesai">
-            <input type="datetime-local" value={nilai.prepastFinish ?? ''} onChange={set('prepastFinish')} />
-          </Field>
+          <div style={{ gridColumn: 'span 2' }}>
+            <Field label="Selesai" bantuan="Tanggal ikut Mulai, jam diisi sendiri">
+              <div className="baris" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  type="date"
+                  value={nilai.prepastFinishTanggal ?? ''}
+                  onChange={set('prepastFinishTanggal')}
+                  style={{ flex: 1, minWidth: 150 }}
+                />
+                <input
+                  type="time"
+                  value={nilai.prepastFinishJam ?? ''}
+                  onChange={set('prepastFinishJam')}
+                  style={{ flex: 1, minWidth: 130 }}
+                />
+              </div>
+            </Field>
+          </div>
           <Field label="Flowrate">
             <input className="angka-input" inputMode="decimal" value={nilai.flowrate ?? ''} onChange={set('flowrate')} />
           </Field>
