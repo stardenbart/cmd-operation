@@ -11,6 +11,7 @@
 
 import { verifikasiAccessToken } from '../auth/tokens.js';
 import { can } from '../auth/permissions.js';
+import { shiftPada } from '../auth/shift.js';
 import { UnauthorizedError, ForbiddenError } from './errors.js';
 
 /** Mewajibkan access token yang sah. Mengisi `req.user`. */
@@ -24,6 +25,20 @@ export function wajibLogin(req, res, next) {
 
   try {
     const klaim = verifikasiAccessToken(token);
+
+    /*
+     * Sesi berakhir begitu shift berganti — DIPERIKSA DI SINI, tiap request,
+     * bukan hanya saat refresh(). Access token hidup 15 menit; menunggu
+     * kedaluwarsa wajarnya berarti operator shift berikutnya bisa memakai
+     * identitas operator shift sebelumnya (yang lupa logout) sampai 15 menit
+     * — jejak audit mencatat orang yang salah. `shift` di klaim adalah shift
+     * ASAL SESI (lihat login()/refresh()), dibandingkan dengan shift SAAT
+     * INI, bukan disamakan dengan waktu token diterbitkan.
+     */
+    if (klaim.shift !== shiftPada()) {
+      return next(new UnauthorizedError('Sesi berakhir — pergantian shift, silakan masuk kembali'));
+    }
+
     req.user = {
       id: klaim.sub,
       kode: klaim.kode,

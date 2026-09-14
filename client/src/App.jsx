@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './lib/auth.jsx';
+import { msSampaiPergantianShift } from './lib/shift.js';
 import Login from './pages/Login.jsx';
 import DialogGantiPassword from './components/DialogGantiPassword.jsx';
 import PasangPWA from './components/PasangPWA.jsx';
@@ -151,6 +152,13 @@ function GrupMenu({ grup, ikon, anak, terbuka, onToggle }) {
   );
 }
 
+// Sesi berakhir OTOMATIS begitu shift berganti (07.00/15.00/23.00 WIB) —
+// server yang menegakkannya sungguhan (wajibLogin & refresh() menolak lepas
+// dari apa kata klien, lihat auth/shift.js di server). Peringatan & keluar
+// di sini murni supaya operator tidak kehilangan pekerjaan yang sedang
+// diketik tanpa tanda-tanda.
+const PERINGATAN_MENIT_SEBELUM_SHIFT = 5;
+
 function Kerangka({ children }) {
   const { operator, keluar, boleh } = useAuth();
   const navigate = useNavigate();
@@ -158,9 +166,43 @@ function Kerangka({ children }) {
   const [gantiPassword, setGantiPassword] = useState(false);
   const [sidebarTampil, setSidebarTampil] = useState(() => bacaPref('nav:tampil', true));
   const [grupTerbuka, setGrupTerbuka] = useState(() => bacaPref('nav:grup', {}));
+  const [peringatanShift, setPeringatanShift] = useState(false);
 
   useEffect(() => simpanPref('nav:tampil', sidebarTampil), [sidebarTampil]);
   useEffect(() => simpanPref('nav:grup', grupTerbuka), [grupTerbuka]);
+
+  useEffect(() => {
+    /*
+     * DIPERIKSA BERKALA (bukan satu setTimeout sekali tembak dijadwalkan di
+     * muka) — supaya tidak "nyangkut" saat tab di-background. Timer sepanjang
+     * berjam-jam (sampai 8 jam, jarak terjauh ke pergantian shift) DI-THROTTLE
+     * browser di tab tidak aktif, kadang sampai lewat jauh dari jadwalnya;
+     * peringatan sempat muncul tapi logout-nya sendiri jadi telat/tidak
+     * pernah tereksekusi. Polling tiap 30 detik selalu membandingkan dengan
+     * jam SUNGGUHAN saat itu — berapa pun telatnya satu tick terjadi, tick
+     * berikutnya tetap benar, tidak bisa nyangkut menampilkan peringatan basi.
+     */
+    function periksa() {
+      const msSampaiGanti = msSampaiPergantianShift();
+      if (msSampaiGanti <= 0) {
+        keluar().then(() => navigate('/', { replace: true }));
+        return;
+      }
+      setPeringatanShift(msSampaiGanti <= PERINGATAN_MENIT_SEBELUM_SHIFT * 60_000);
+    }
+
+    periksa();
+    const id = setInterval(periksa, 30_000);
+    // Tab yang kembali terlihat langsung diperiksa ulang — jangan menunggu
+    // tick 30 detik berikutnya kalau operator baru saja kembali dari tab lain
+    // persis pada saat pergantian shift.
+    const tanganiVisibilitas = () => { if (!document.hidden) periksa(); };
+    document.addEventListener('visibilitychange', tanganiVisibilitas);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', tanganiVisibilitas);
+    };
+  }, [keluar, navigate]);
 
   // Menu tersaring wewenang; grup yang seluruh anaknya tak berwenang dibuang.
   const nav = NAV.map((n) => {
@@ -227,6 +269,12 @@ function Kerangka({ children }) {
           </button>
         </div>
       </header>
+
+      {peringatanShift && (
+        <div className="pesan pesan--waspada" role="status" style={{ margin: '12px 16px 0' }}>
+          Shift akan segera berganti — sesi ini akan otomatis berakhir. Segera simpan pekerjaan yang sedang berjalan.
+        </div>
+      )}
 
       <div className="app__badan">
         <nav className="nav" aria-label="Menu Utama">

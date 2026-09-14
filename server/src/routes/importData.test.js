@@ -4,6 +4,7 @@ import pino from 'pino';
 import JSZip from 'jszip';
 import { buatApp } from '../app.js';
 import { buatAccessToken } from '../auth/tokens.js';
+import { shiftPada } from '../auth/shift.js';
 
 test('route pratinjau Import terpasang dan menolak paket kosong secara terstruktur', async (t) => {
   const app = buatApp(pino({ level: 'silent' }));
@@ -13,7 +14,7 @@ test('route pratinjau Import terpasang dan menolak paket kosong secara terstrukt
 
   const token = buatAccessToken({
     id: 1, kode: 'ADMIN', nama: 'Administrator', role: 'Admin',
-  });
+  }, { shift: shiftPada() });
   const zip = await new JSZip().generateAsync({ type: 'nodebuffer' });
   const { port } = server.address();
   const respons = await fetch(`http://127.0.0.1:${port}/api/v1/import/preview`, {

@@ -5,6 +5,7 @@ import pino from 'pino';
 import { bangunBasisDataUji, reset, tutup, AKTOR, IP_UJI } from './bantuan/dbUji.js';
 import { buatApp } from '../src/app.js';
 import { buatAccessToken } from '../src/auth/tokens.js';
+import { shiftPada } from '../src/auth/shift.js';
 
 let pool;
 let receiving;
@@ -49,7 +50,7 @@ const tokenOperator = () => buatAccessToken({
   kode: AKTOR.operator.kode,
   nama: AKTOR.operator.nama,
   role: AKTOR.operator.role,
-});
+}, { shift: shiftPada() });
 
 describe('Prepast parsial', () => {
   test('rute HTTP menerima payload frontend tanpa siloId dan volumeLtr', async () => {

@@ -30,6 +30,7 @@ import {
   buatRefreshToken,
   hashRefreshToken,
 } from './tokens.js';
+import { shiftPada } from './shift.js';
 
 function terkunci(operator) {
   return operator.locked_until && new Date(operator.locked_until) > new Date();
@@ -181,11 +182,15 @@ export async function login({ username, password, userAgent, ip }) {
       [operator.id],
     );
 
+    // Shift ASAL SESI — dicatat sekali di sini, dibawa apa adanya lewat
+    // rotasi refresh() sampai sesi ini berakhir (lihat auth/shift.js).
+    const shift = shiftPada();
+
     const refreshToken = buatRefreshToken();
     await conn.query(
-      `INSERT INTO refresh_token (operator_id, token_hash, expires_at, user_agent)
-       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 7 DAY), ?)`,
-      [operator.id, hashRefreshToken(refreshToken), userAgent ?? null],
+      `INSERT INTO refresh_token (operator_id, token_hash, expires_at, user_agent, shift_login)
+       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 7 DAY), ?, ?)`,
+      [operator.id, hashRefreshToken(refreshToken), userAgent ?? null, shift],
     );
 
     await catatAudit(conn, {
@@ -197,7 +202,7 @@ export async function login({ username, password, userAgent, ip }) {
     });
 
     return {
-      accessToken: buatAccessToken(operator),
+      accessToken: buatAccessToken(operator, { shift }),
       refreshToken,
       operator: {
         id: operator.id,
@@ -217,8 +222,8 @@ export async function refresh({ refreshToken, userAgent }) {
   return withTransaction(async (conn) => {
     const hash = hashRefreshToken(refreshToken ?? '');
     const [baris] = await conn.query(
-      `SELECT rt.id, rt.operator_id, o.kode, o.nama_lengkap, o.role, o.is_active,
-              o.custom_permissions
+      `SELECT rt.id, rt.operator_id, rt.shift_login, o.kode, o.nama_lengkap, o.role,
+              o.is_active, o.custom_permissions
          FROM refresh_token rt
          JOIN operator o ON o.id = rt.operator_id
         WHERE rt.token_hash = ?
@@ -238,11 +243,20 @@ export async function refresh({ refreshToken, userAgent }) {
       sesi.id,
     ]);
 
+    // Shift berganti sejak sesi ini login — sesi TIDAK dilanjutkan, apa pun
+    // umur refresh token-nya. Token lama sudah dicabut di atas; di sini
+    // cukup berhenti tanpa menerbitkan yang baru (lihat auth/shift.js).
+    // Mencegah operator shift berikutnya diam-diam meneruskan sesi shift
+    // sebelumnya yang lupa logout.
+    if (sesi.shift_login !== shiftPada()) {
+      throw new UnauthorizedError('Sesi berakhir — pergantian shift, silakan masuk kembali');
+    }
+
     const tokenBaru = buatRefreshToken();
     await conn.query(
-      `INSERT INTO refresh_token (operator_id, token_hash, expires_at, user_agent)
-       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 7 DAY), ?)`,
-      [sesi.operator_id, hashRefreshToken(tokenBaru), userAgent ?? null],
+      `INSERT INTO refresh_token (operator_id, token_hash, expires_at, user_agent, shift_login)
+       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 7 DAY), ?, ?)`,
+      [sesi.operator_id, hashRefreshToken(tokenBaru), userAgent ?? null, sesi.shift_login],
     );
 
     return {
@@ -252,7 +266,7 @@ export async function refresh({ refreshToken, userAgent }) {
         nama_lengkap: sesi.nama_lengkap,
         role: sesi.role,
         custom_permissions: sebagaiArrayAksi(sesi.custom_permissions),
-      }),
+      }, { shift: sesi.shift_login }),
       refreshToken: tokenBaru,
     };
   });

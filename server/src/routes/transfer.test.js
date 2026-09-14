@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 import pino from 'pino';
 import { buatApp } from '../app.js';
 import { buatAccessToken } from '../auth/tokens.js';
+import { shiftPada } from '../auth/shift.js';
 
 async function denganServer(kerja) {
   const app = buatApp(pino({ level: 'silent' }));
@@ -32,7 +33,7 @@ async function denganServer(kerja) {
 }
 
 const tokenOperator = () =>
-  buatAccessToken({ id: 2, kode: 'OP', nama: 'Operator', role: 'Operator' });
+  buatAccessToken({ id: 2, kode: 'OP', nama: 'Operator', role: 'Operator' }, { shift: shiftPada() });
 
 const kirimTransfer = (port, body) =>
   fetch(`http://127.0.0.1:${port}/api/v1/transfer`, {

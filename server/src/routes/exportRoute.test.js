@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import pino from 'pino';
 import { buatApp } from '../app.js';
 import { buatAccessToken } from '../auth/tokens.js';
+import { shiftPada } from '../auth/shift.js';
 
 test('route Data Tabel Raw terpasang pada /api/v1/export/download-table', async (t) => {
   const app = buatApp(pino({ level: 'silent' }));
@@ -15,7 +16,7 @@ test('route Data Tabel Raw terpasang pada /api/v1/export/download-table', async 
     kode: 'ADMIN',
     nama: 'Administrator',
     role: 'Admin',
-  });
+  }, { shift: shiftPada() });
   const { port } = server.address();
 
   // Tanpa query tanggal harus berhenti di validasi (400). Jika route tidak
