@@ -86,6 +86,15 @@ const BAB = [
           'Tombol Keluar mengakhiri sesi Anda di perangkat ini.',
         ),
       ),
+      sub(
+        'Sesi mengikuti shift',
+        p('Sesi login mengikuti jadwal shift: Shift 1 pukul 07.00–14.59, Shift 2 pukul 15.00–22.59, dan Shift 3 pukul 23.00–06.59.'),
+        ul(
+          'Saat jam berpindah dari satu shift ke shift berikutnya, sesi Anda otomatis berakhir (logout) — ini berlaku untuk peran apa pun.',
+          'Peringatan muncul 5 menit sebelum pergantian shift supaya Anda sempat menyimpan pekerjaan yang sedang berjalan.',
+          'Setelah shift berganti, masuk kembali seperti biasa untuk melanjutkan.',
+        ),
+      ),
     ],
   },
 
@@ -156,6 +165,15 @@ const BAB = [
           'Karena penerimaan dan prepast kadang berjalan paralel, Anda boleh menyimpan separuh dulu tanpa mengisi waktunya. Catatan itu menjadi input gantung dan akan ditagih di Dashboard sampai dilengkapi.',
         ),
       ),
+      sub(
+        'Waktu selesai & Proses Kontinu',
+        ul(
+          'Waktu selesai dipisah jadi dua kolom: tanggal dan jam. Begitu tanggal waktu mulai diisi, tanggal selesai ikut terisi otomatis — jamnya sengaja dikosongkan karena harus diisi sesuai kejadian sebenarnya.',
+          'Mencentang "Proses Kontinu" juga mengisi tanggal selesai secara otomatis dengan cara yang sama.',
+          'Kalau saat menyimpan baru tanggalnya yang terisi (jam belum), aplikasi tetap mengingatnya sebagai draft — tidak hilang saat catatan ini dibuka kembali nanti, baik dari halaman Prepast maupun dialog "Lengkapi Prepast" di Data.',
+        ),
+        gambar(`${IMG}/cmd-prepast-selesai.png`, 'Kolom waktu selesai pada Prepast', 'Tanggal Selesai terisi otomatis dari Mulai, jamnya dikosongkan menunggu diisi sesuai kejadian sebenarnya.'),
+      ),
     ],
   },
 
@@ -169,7 +187,11 @@ const BAB = [
         'Mencatat pengecekan',
         p('Monitoring adalah ronde pengecekan berkala. Pilih silo yang dicek, lalu catat pH, suhu, dan waktu pengecekannya.'),
         gambar(`${IMG}/cmd-monitoring.png`, 'Halaman ronde pengecekan', 'Ronde pengecekan. Silo yang sudah lewat jadwalnya ditandai agar tidak terlewat.'),
-        p('Silo yang sudah melewati jadwal cek ditandai di Dashboard, jadi tidak ada silo yang terlupa diperiksa.'),
+        ul(
+          'Setiap cek yang disimpan dibandingkan dengan cek sebelumnya pada silo yang sama. Kalau jaraknya melewati interval jadwal silo itu, catatan ini ditandai "Lewat Jadwal" secara permanen — bisa dilihat dan disaring dari halaman Data, jadi celah jadwal yang terlewat tidak hilang begitu saja saat cek berikutnya masuk.',
+          'Volume silo yang 0 L saat ini tidak mengunci pengisian pH/suhu. Anda tetap bisa mencatat, misalnya untuk waktu cek yang mundur — aplikasi hanya mengingatkan untuk memastikan waktu cek yang dipilih sesuai kondisi fisik silo saat itu.',
+        ),
+        gambar(`${IMG}/cmd-monitoring-lewat-jadwal.png`, 'Badge Lewat Jadwal pada ronde Monitoring', 'SILO2 tertandai "Lewat Jadwal" karena melewati interval ceknya; SILO6 kosong 0 L tetap dapat diisi pH dan suhunya.'),
       ),
     ],
   },
@@ -198,6 +220,15 @@ const BAB = [
           'Pengosongan silo: tidak berbatch karena bukan pemakaian produksi.',
         ),
         p('Susu tertua di silo selalu keluar lebih dulu (FIFO), dihitung otomatis. Anda tidak perlu memilih batch mana yang keluar.'),
+      ),
+      sub(
+        'Beberapa baris sekaligus: batch sama & tank tujuan bersama',
+        ul(
+          'Tombol "Tambah transfer" membuka baris baru untuk mencatat beberapa transfer dalam satu kali kirim.',
+          'Kolom "Tersedia" pada tiap baris mengikuti sisa volume secara langsung: begitu satu baris memakai sebagian volume silo, baris lain yang berasal dari silo yang sama langsung menunjukkan sisanya, bukan angka volume awal.',
+          'Saat mode "Batch sama" dipilih, ada field "Tank tujuan bersama" yang berlaku untuk seluruh baris sekaligus — tidak perlu memilih tank satu-satu di tiap baris.',
+        ),
+        gambar(`${IMG}/cmd-transfer-batch-sama.png`, 'Mode Batch sama dengan Tank tujuan bersama', 'Tank tujuan bersama dan Batch bersama berlaku untuk semua baris transfer sekaligus; kolom Tank tujuan tiap baris otomatis mengikuti.'),
       ),
     ],
   },

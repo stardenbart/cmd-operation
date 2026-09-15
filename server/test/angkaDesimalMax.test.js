@@ -22,6 +22,7 @@ let receiving;
 let prepast;
 let buatApp;
 let buatAccessToken;
+let shiftPada;
 
 const T = (jam, menit = 0) => new Date(2026, 8, 8, jam, menit);
 
@@ -33,6 +34,7 @@ before(async () => {
   prepast = await import('../src/services/prepast.js');
   ({ buatApp } = await import('../src/app.js'));
   ({ buatAccessToken } = await import('../src/auth/tokens.js'));
+  ({ shiftPada } = await import('../src/auth/shift.js'));
 });
 
 beforeEach(reset);
@@ -73,12 +75,14 @@ async function denganServer(kerja) {
   }
 }
 
+// Shift dihitung SAAT test berjalan (bukan di-hardcode) — sesi wajibLogin()
+// memeriksa shift token terhadap shift saat ini, lihat auth/shift.js.
 const tokenOperator = () => buatAccessToken({
   id: AKTOR.operator.id,
   kode: AKTOR.operator.kode,
   nama: AKTOR.operator.nama,
   role: AKTOR.operator.role,
-});
+}, { shift: shiftPada() });
 
 describe('Reproduksi bug: Temp Output melebihi kolom DECIMAL(6,2)', () => {
   test('ditolak sebagai 400 VALIDATION_ERROR, bukan 500 INTERNAL_ERROR', async () => {

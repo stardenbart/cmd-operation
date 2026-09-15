@@ -12,12 +12,15 @@ import pino from 'pino';
 import { bangunBasisDataUji, tutup, AKTOR } from './bantuan/dbUji.js';
 import { buatApp } from '../src/app.js';
 import { buatAccessToken } from '../src/auth/tokens.js';
+import { shiftPada } from '../src/auth/shift.js';
 
 let server;
 let alamat;
 
 function url(path) { return `http://127.0.0.1:${alamat.port}${path}`; }
-const tokenUntuk = (a) => buatAccessToken({ id: a.id, kode: a.kode, nama: a.nama, role: a.role });
+const tokenUntuk = (a) => buatAccessToken(
+  { id: a.id, kode: a.kode, nama: a.nama, role: a.role }, { shift: shiftPada() },
+);
 const authHeader = (a) => ({ Authorization: `Bearer ${tokenUntuk(a)}` });
 
 before(async () => {

@@ -65,8 +65,13 @@ export async function konteksRonde() {
   return baris.map((b) => ({
     ...b,
     supplierList: (perSilo.get(b.silo_id) ?? []).join(', '),
-    // Silo kosong tidak perlu dicek: tidak ada susu yang dapat menyimpang.
-    perluDicek: Number(b.vol_aktual_ltr) > 0,
+    /*
+     * BUKAN untuk mengunci input lagi (lihat catatan di Monitoring.jsx) —
+     * volume SEKARANG bisa saja 0 padahal saat jam yang operator pilih untuk
+     * dicatat, silo itu sungguh berisi. Sekadar peringatan tampilan supaya
+     * operator sadar dan memastikan sendiri waktu cek yang dipilih benar.
+     */
+    volumeKosongSaatIni: Number(b.vol_aktual_ltr) <= 0,
   }));
 }
 
@@ -93,13 +98,14 @@ export async function simpanRonde({ timeCheck, hasil }, aktor, ip) {
 
   return withTransaction(async (conn) => {
     const [siloBaris] = await conn.query(
-      `SELECT v.silo_id, v.silo_name, v.vol_aktual_ltr
+      `SELECT v.silo_id, v.silo_name, v.vol_aktual_ltr, v.monitoring_interval_jam
          FROM v_silo_volume v WHERE v.is_buffer = FALSE`,
     );
     const infoSilo = new Map(siloBaris.map((s) => [s.silo_id, s]));
 
     const dibuat = [];
     const diLuarRentang = [];
+    const lewatJadwal = [];
 
     for (const h of hasil) {
       const silo = infoSilo.get(h.siloId);
@@ -110,6 +116,36 @@ export async function simpanRonde({ timeCheck, hasil }, aktor, ip) {
       if (h.ph < PH_MIN || h.ph > PH_MAKS) {
         diLuarRentang.push({
           siloName: silo.silo_name, ph: h.ph, min: PH_MIN, maks: PH_MAKS,
+        });
+      }
+
+      /*
+       * BR-10 — jejak celah jadwal. v_silo_monitoring_status hanya
+       * membandingkan SEKARANG dengan cek terakhir; begitu cek BARU ini
+       * tersimpan (biarpun telat), status live-nya langsung "OK" lagi dan
+       * jejak bahwa satu jadwal cek terlewat di antaranya hilang sama
+       * sekali. Dicatat di sini, sekali, permanen — dibandingkan terhadap
+       * cek SEBELUM waktu cek ini (bukan "terakhir di-insert"), supaya
+       * pengisian yang sengaja backdated tetap dibandingkan dengan cek yang
+       * kronologisnya benar-benar mendahuluinya.
+       */
+      const [[sebelumnya]] = await conn.query(
+        `SELECT time_check FROM monitoring
+          WHERE silo_id = ? AND time_check < ?
+            AND status_approval NOT IN ('Rejected','REVISED','VOIDED')
+          ORDER BY time_check DESC, id DESC LIMIT 1`,
+        [h.siloId, timeCheck],
+      );
+      const jamSejakCekSebelumnya = sebelumnya
+        ? (new Date(timeCheck) - new Date(sebelumnya.time_check)) / 3_600_000
+        : null;
+      const adalahLewatJadwal = jamSejakCekSebelumnya !== null
+        && jamSejakCekSebelumnya > Number(silo.monitoring_interval_jam);
+      if (adalahLewatJadwal) {
+        lewatJadwal.push({
+          siloName: silo.silo_name,
+          jamSejakCekSebelumnya: Math.round(jamSejakCekSebelumnya * 100) / 100,
+          ambangJam: Number(silo.monitoring_interval_jam),
         });
       }
 
@@ -135,13 +171,20 @@ export async function simpanRonde({ timeCheck, hasil }, aktor, ip) {
       const [res] = await conn.query(
         `INSERT INTO monitoring
            (kode, silo_id, ph_check, temp_check, time_check,
-            supplier_list, val_aktual_snapshot_ltr, operator_id, status_approval)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending Approval')`,
+            supplier_list, val_aktual_snapshot_ltr,
+            jam_sejak_cek_sebelumnya, lewat_jadwal,
+            operator_id, status_approval)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending Approval')`,
         [kode, h.siloId, h.ph, h.temp, timeCheck, supplierList,
-          silo.vol_aktual_ltr, aktor.id],
+          silo.vol_aktual_ltr,
+          jamSejakCekSebelumnya === null ? null : Math.round(jamSejakCekSebelumnya * 100) / 100,
+          adalahLewatJadwal, aktor.id],
       );
 
-      dibuat.push({ id: res.insertId, kode, siloId: h.siloId, siloName: silo.silo_name });
+      dibuat.push({
+        id: res.insertId, kode, siloId: h.siloId, siloName: silo.silo_name,
+        lewatJadwal: adalahLewatJadwal,
+      });
     }
 
     for (const d of dibuat) {
@@ -151,7 +194,7 @@ export async function simpanRonde({ timeCheck, hasil }, aktor, ip) {
       });
     }
 
-    return { dibuat, diLuarRentang };
+    return { dibuat, diLuarRentang, lewatJadwal };
   });
 }
 

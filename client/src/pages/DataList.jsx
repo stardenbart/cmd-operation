@@ -30,9 +30,12 @@ const filterKosong = {
   statusIds: [], cari: '', dariTanggal: '', sampaiTanggal: '', draftSaja: false,
   // Hanya bermakna untuk modul receiving - lihat kartu "Menunggu Berat Jenis".
   bjKosong: false,
-  // Hanya bermakna untuk modul transfer - Pindah Silo yang melebihi batas
+  // Hanya bermakna untuk modul transfer & prepast - yang melebihi batas
   // keras silo tujuan (BR-24 kini soft cap).
   lewatKapasitas: false,
+  // Hanya bermakna untuk modul monitoring - cek yang jaraknya dari cek
+  // sebelumnya melebihi monitoring_interval_jam silo (BR-10).
+  lewatJadwal: false,
   // Kosong berarti SELURUH silo. Lihat catatan pada PilihBanyakCari.
   siloIds: [],
   // Filter tank/MT tujuan (banyak sekaligus) - hanya bermakna untuk transfer.
@@ -326,6 +329,18 @@ export default function DataList() {
             <span className="label">Hanya yang melebihi batas keras tujuan</span>
           </label>
         )}
+
+        {modul === 'monitoring' && (
+          <label className="baris" style={{ gap: 8, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 20, height: 20, minHeight: 20 }}
+              checked={filter.lewatJadwal}
+              onChange={setF('lewatJadwal')}
+            />
+            <span className="label">Hanya yang lewat jadwal</span>
+          </label>
+        )}
       </div>
 
       {isLoading ? (
@@ -355,6 +370,9 @@ export default function DataList() {
                     {/* Sama seperti badge di kartu Silo Dashboard — kapasitas
                         nominal tidak lagi memblokir, hanya ditandai. */}
                     {b.melampauiKapasitas && <> <Lencana nada="waspada">Melampaui Nominal</Lencana></>}
+                    {/* BR-10 — jaraknya dari cek sebelumnya melebihi interval
+                        silo; tetap tersimpan, cuma ditandai untuk ditinjau. */}
+                    {b.lewatJadwal && <> <Lencana nada="waspada">Lewat Jadwal</Lencana></>}
                   </td>
                   <td>
                     {b.ringkasan}

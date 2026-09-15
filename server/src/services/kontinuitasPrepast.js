@@ -47,7 +47,13 @@ export async function recordTerakhir(conn, { kunci = false, excludeId = null } =
             p.prepast_start AS start, p.prepast_finish AS finish,
             p.vol_prepast_ltr AS volumeLtr, p.status_approval AS status,
             r.kode AS receivingKode, sup.supplier_name AS supplierName,
-            s.silo_name AS siloName
+            s.silo_name AS siloName,
+            /* Bukan bagian dari aturan kontinuitas waktu — cuma dibawakan
+               di sini supaya form Prepast BARU bisa menyarankan (bukan
+               memaksa) nilai proses yang sama, sekali klik lewat checkbox
+               Proses Kontinu yang sudah ada. */
+            p.flowrate_pst AS flowrate, p.temp_after_heater AS tempAfterHeater,
+            p.temp_output_prd AS tempOutput
        FROM prepast_record p
        LEFT JOIN receiving r ON r.id = p.receiving_id
        LEFT JOIN supplier sup ON sup.id = p.supplier_id

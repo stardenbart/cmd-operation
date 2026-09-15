@@ -31,6 +31,10 @@ export default function Monitoring() {
   const [timeCheck, setTimeCheck] = useState(sekarangLokal);
   const [isian, setIsian] = useState({});
   const [sukses, setSukses] = useState(null);
+  // Terpisah dari pesan sukses (BR-10) — sebelumnya ditempel jadi satu
+  // paragraf di dalam banner hijau biasa dan gampang tidak terlihat.
+  // Sekarang alert waspada sendiri, sama seperti pH di luar rentang.
+  const [lewatJadwalTerakhir, setLewatJadwalTerakhir] = useState([]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['monitoring', 'round-context'],
@@ -48,6 +52,11 @@ export default function Monitoring() {
         pesan += ` pH di luar rentang pada ${d.diLuarRentang.map((x) => `${x.siloName} (${x.ph})`).join(', ')}.`;
       }
       setSukses(pesan);
+      // BR-10 — tetap tersimpan (tidak ditolak), tapi ditandai lewat alert
+      // waspada TERPISAH supaya celah jadwal tidak lewat tanpa disadari
+      // operator sendiri (sebelumnya ditempel di pesan sukses dan gampang
+      // tidak terlihat).
+      setLewatJadwalTerakhir(d.lewatJadwal);
       setIsian({});
       qc.invalidateQueries({ queryKey: ['silos'] });
       qc.invalidateQueries({ queryKey: ['monitoring'] });
@@ -72,6 +81,7 @@ export default function Monitoring() {
   function kirim(e) {
     e.preventDefault();
     setSukses(null);
+    setLewatJadwalTerakhir([]);
     simpan.mutate({
       timeCheck,
       hasil: terisi.map((s) => ({
@@ -91,6 +101,12 @@ export default function Monitoring() {
         </div>
 
         <PesanSukses>{sukses}</PesanSukses>
+        {lewatJadwalTerakhir.length > 0 && (
+          <div className="pesan pesan--waspada" role="alert">
+            Perhatian — lewat jadwal: {lewatJadwalTerakhir.map((x) => `${x.siloName} (+${x.jamSejakCekSebelumnya} jam dari ambang ${x.ambangJam} jam)`).join(', ')}.
+            {' '}Data tetap tersimpan, tetapi celah ini tercatat dan dapat ditinjau lewat Data List.
+          </div>
+        )}
         <PesanGalat galat={simpan.error} onTutup={() => simpan.reset()} />
 
         <div style={{ maxWidth: 280 }}>
@@ -129,7 +145,7 @@ export default function Monitoring() {
               const ph = isian[s.silo_id]?.ph;
               const phLuar = ph && (angka(ph) < rentangPh.min || angka(ph) > rentangPh.maks);
               return (
-                <tr key={s.silo_id} style={{ opacity: s.perluDicek ? 1 : 0.5 }}>
+                <tr key={s.silo_id} style={{ opacity: s.volumeKosongSaatIni ? 0.6 : 1 }}>
                   <td>
                     <div style={{ fontWeight: 600 }}>{s.silo_name}</div>
                     {s.supplierList && (
@@ -150,7 +166,6 @@ export default function Monitoring() {
                       value={ph ?? ''}
                       onChange={(e) => ubah(s.silo_id, 'ph', e.target.value)}
                       placeholder="6,7"
-                      disabled={!s.perluDicek}
                       style={phLuar ? { borderColor: 'var(--status-critical)' } : undefined}
                     />
                   </td>
@@ -161,7 +176,6 @@ export default function Monitoring() {
                       value={isian[s.silo_id]?.temp ?? ''}
                       onChange={(e) => ubah(s.silo_id, 'temp', e.target.value)}
                       placeholder="4,5"
-                      disabled={!s.perluDicek}
                     />
                   </td>
                 </tr>
@@ -169,6 +183,17 @@ export default function Monitoring() {
             })}
           </tbody>
         </table>
+
+        {/* Volume kosong SEKARANG tidak lagi mengunci input — operator yang
+            mencatat jam mundur (mis. jam 9 tadi) tahu kondisi fisiknya saat
+            itu lebih baik daripada angka volume saat ini. Sekadar pengingat,
+            bukan penolakan. */}
+        {silos.some((s) => s.volumeKosongSaatIni && isian[s.silo_id]?.ph) && (
+          <div className="pesan pesan--info">
+            Volume beberapa silo yang diisi menunjukkan 0 L saat ini — pastikan waktu cek yang
+            dipilih di atas sudah sesuai kondisi fisik silo pada saat itu.
+          </div>
+        )}
 
         {phDiLuar.length > 0 && (
           <div className="pesan pesan--waspada">
@@ -178,7 +203,7 @@ export default function Monitoring() {
         )}
 
         <div className="baris">
-          <span className="label">{terisi.length} dari {silos.filter((s) => s.perluDicek).length} silo terisi</span>
+          <span className="label">{terisi.length} dari {silos.length} silo terisi</span>
           <button className="btn btn--utama dorong" disabled={simpan.isPending || terisi.length === 0}>
             {simpan.isPending ? 'Menyimpan…' : `Simpan ronde (${terisi.length} silo)`}
           </button>

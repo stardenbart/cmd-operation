@@ -114,3 +114,18 @@ export const teksOpsional = (maks = 1000) =>
  */
 export const waktu = () =>
   z.coerce.date({ errorMap: () => ({ message: 'waktu tidak valid' }) });
+
+/**
+ * Tanggal murni (tanpa jam), boleh dikosongkan — BR-16.
+ *
+ * Dipakai KHUSUS untuk `prepastFinishDraftTanggal`: tanggal Waktu Selesai
+ * yang sempat diketik operator sebelum jamnya diisi. Sengaja bukan `waktu()`
+ * — itu menerima string apa pun yang bisa di-parse Date (termasuk datetime
+ * lengkap), sedangkan field ini harus benar-benar tanggal saja, sesuai apa
+ * yang dikirim `<input type="date">`.
+ */
+export const tanggalOpsional = () =>
+  z.preprocess(
+    (v) => (v === '' || v === null ? undefined : v),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'tanggal tidak valid').optional(),
+  );

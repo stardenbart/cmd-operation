@@ -100,7 +100,19 @@ function Kerangka({ lebar, tinggi, yMin, yMaks, tikY, children, satuan }) {
   );
 }
 
-/** Tik sumbu-Y yang bulat, supaya angkanya terbaca. */
+/**
+ * Tik sumbu-Y yang bulat, supaya angkanya terbaca.
+ *
+ * Tik TERAKHIR harus selalu >= maks — itulah yang jadi yMaks bagi seluruh
+ * grafik pemanggil. Sebelumnya loop berhenti pada `v <= maks + langkah/2`,
+ * yang bisa berhenti SATU TIK TERLALU CEPAT begitu maks jatuh di atas
+ * separuh jarak antar-tik (mis. maks=124.000 dengan langkah=50.000 berhenti
+ * di tik 100.000, padahal 150.000 dibutuhkan) — sumbu-Y jadi lebih pendek
+ * dari data aslinya dan puncak grafik terpotong rata di tepi kanvas SVG.
+ * Sekarang loop terus mendorong tik sampai tik TERAKHIR yang didorong
+ * sungguh menutupi maks, baru berhenti — dijamin benar untuk maks berapa
+ * pun, bukan bergantung pada margin toleransi yang bisa meleset.
+ */
 function tikBulat(min, maks, jumlah = 4) {
   if (maks === min) return [min];
   const kasar = (maks - min) / jumlah;
@@ -108,7 +120,11 @@ function tikBulat(min, maks, jumlah = 4) {
   const langkah = [1, 2, 2.5, 5, 10].map((m) => m * pangkat).find((m) => m >= kasar) ?? pangkat * 10;
   const awal = Math.floor(min / langkah) * langkah;
   const tik = [];
-  for (let v = awal; v <= maks + langkah / 2; v += langkah) tik.push(Number(v.toFixed(6)));
+  let v = awal;
+  do {
+    tik.push(Number(v.toFixed(6)));
+    v += langkah;
+  } while (tik.at(-1) < maks);
   return tik;
 }
 

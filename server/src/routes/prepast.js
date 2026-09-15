@@ -4,7 +4,9 @@ import * as prepast from '../services/prepast.js';
 import { wajibLogin, wajibWewenang } from '../middleware/auth.js';
 import { AKSI } from '../auth/permissions.js';
 import { asyncHandler } from '../middleware/errors.js';
-import { validasiBody, validasiQuery, angkaDesimalOpsional, teksOpsional, waktu } from '../middleware/validasi.js';
+import {
+  validasiBody, validasiQuery, angkaDesimalOpsional, teksOpsional, waktu, tanggalOpsional,
+} from '../middleware/validasi.js';
 
 const router = Router();
 router.use(wajibLogin);
@@ -27,6 +29,9 @@ const skemaBuat = z.object({
   // Variabel proses diisi SATU KALI, berlaku untuk seluruh baris (FR-29.2)
   prepastStart: waktu(),
   prepastFinish: waktu().optional(),
+  // Tanggal Selesai yang sempat diketik sebelum jamnya diisi (BR-16) — sekadar
+  // pengingat tampilan, lihat services/prepast.js.
+  prepastFinishDraftTanggal: tanggalOpsional(),
   // Batas max mengikuti kolom database: flowrate_pst DECIMAL(8,2),
   // temp_after_heater & temp_output_prd DECIMAL(6,2).
   flowrate: angkaDesimalOpsional({ min: 0, max: 999999.99, maxDecimals: 2, inclusive: true }),
@@ -48,6 +53,9 @@ const skemaLengkapi = z.object({
   pecahanTambahan: z.array(skemaPecahan).max(8).optional(),
   prepastStart: waktu().optional(),
   prepastFinish: waktu().optional(),
+  // Tanggal Selesai yang sempat diketik sebelum jamnya diisi (BR-16) — sekadar
+  // pengingat tampilan, lihat services/prepast.js.
+  prepastFinishDraftTanggal: tanggalOpsional(),
   // Batas max mengikuti kolom database: flowrate_pst DECIMAL(8,2),
   // temp_after_heater & temp_output_prd DECIMAL(6,2).
   flowrate: angkaDesimalOpsional({ min: 0, max: 999999.99, maxDecimals: 2, inclusive: true }),
@@ -58,7 +66,7 @@ const skemaLengkapi = z.object({
   kontinu: z.coerce.boolean().optional(),
   continuityPreviousId: z.coerce.number().int().positive().optional(),
 }).refine(
-  (nilai) => ['siloId', 'volumeLtr', 'prepastStart', 'prepastFinish', 'flowrate', 'tempAfterHeater', 'tempOutput']
+  (nilai) => ['siloId', 'volumeLtr', 'prepastStart', 'prepastFinish', 'prepastFinishDraftTanggal', 'flowrate', 'tempAfterHeater', 'tempOutput']
     .some((key) => nilai[key] !== undefined)
     || (nilai.pecahanTambahan?.length ?? 0) > 0,
   { message: 'isi minimal satu field Prepast yang akan dilengkapi' },

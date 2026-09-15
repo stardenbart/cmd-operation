@@ -23,9 +23,9 @@ import { config } from '../config.js';
  * pada tiap request.
  *
  * @param {{id:number, kode:string, nama_lengkap?:string, nama?:string, role:string, custom_permissions?:string[]}} operator
- * @param {{kedaluwarsa?: string}} opsi
+ * @param {{kedaluwarsa?: string, shift?: number}} opsi
  */
-export function buatAccessToken(operator, { kedaluwarsa } = {}) {
+export function buatAccessToken(operator, { kedaluwarsa, shift } = {}) {
   const muatan = {
     sub: operator.id,
     kode: operator.kode,
@@ -34,6 +34,9 @@ export function buatAccessToken(operator, { kedaluwarsa } = {}) {
   };
   const cp = operator.custom_permissions ?? operator.customPermissions;
   if (Array.isArray(cp) && cp.length > 0) muatan.cp = cp;
+  // Shift ASAL SESI (bukan dihitung ulang tiap token) — dibandingkan dengan
+  // shift saat ini di wajibLogin(), lihat auth/shift.js.
+  if (shift != null) muatan.shift = shift;
   return jwt.sign(
     muatan,
     config.auth.jwtSecret,

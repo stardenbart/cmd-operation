@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import pino from 'pino';
 import { buatApp } from '../app.js';
 import { buatAccessToken } from '../auth/tokens.js';
+import { shiftPada } from '../auth/shift.js';
 
 async function denganServer(kerja) {
   const app = buatApp(pino({ level: 'silent' }));
@@ -34,7 +35,7 @@ const kirim = (port, token) => fetch(`http://127.0.0.1:${port}/api/v1/master/sup
 
 test('T-49: Viewer polos ditolak endpoint master:kelola (403)', async () => {
   await denganServer(async (port) => {
-    const token = buatAccessToken({ id: 9, kode: 'VW', nama: 'Viewer', role: 'Viewer' });
+    const token = buatAccessToken({ id: 9, kode: 'VW', nama: 'Viewer', role: 'Viewer' }, { shift: shiftPada() });
     const res = await kirim(port, token);
     assert.equal(res.status, 403);
   });
@@ -45,7 +46,7 @@ test('T-48/T-49: Viewer dengan cp master:kelola LOLOS gerbang (bukan 403)', asyn
     const token = buatAccessToken({
       id: 9, kode: 'VW', nama: 'Viewer', role: 'Viewer',
       custom_permissions: ['master:kelola'],
-    });
+    }, { shift: shiftPada() });
     const res = await kirim(port, token);
     // Lolos otorisasi; gagal karena body kosong (validasi), BUKAN karena wewenang.
     assert.notEqual(res.status, 403);
@@ -57,7 +58,7 @@ test('cp yang tidak relevan tetap tidak membuka endpoint lain', async () => {
     const token = buatAccessToken({
       id: 9, kode: 'VW', nama: 'Viewer', role: 'Viewer',
       custom_permissions: ['export:jalankan'],
-    });
+    }, { shift: shiftPada() });
     const res = await kirim(port, token);
     assert.equal(res.status, 403);
   });

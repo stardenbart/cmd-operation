@@ -95,6 +95,26 @@ describe('access token', () => {
     const tokenHS512 = jwt.sign({ sub: 1, role: 'Admin' }, RAHASIA_UJI, { algorithm: 'HS512' });
     assert.throws(() => verifikasiAccessToken(tokenHS512));
   });
+
+  /**
+   * Shift ASAL SESI (auth/shift.js) — dipakai wajibLogin() mengakhiri sesi
+   * otomatis begitu shift berganti. Disertakan hanya saat diberikan, sama
+   * seperti `cp`, supaya token tanpa shift (mis. dari sebelum fitur ini) tidak
+   * membawa klaim `shift: undefined` yang membingungkan.
+   */
+  test('menyertakan klaim shift saat diberikan', () => {
+    const token = buatAccessToken(OPERATOR, { shift: 2 });
+    const klaim = verifikasiAccessToken(token);
+
+    assert.equal(klaim.shift, 2);
+  });
+
+  test('tidak menyertakan klaim shift saat tidak diberikan', () => {
+    const token = buatAccessToken(OPERATOR);
+    const klaim = verifikasiAccessToken(token);
+
+    assert.equal(klaim.shift, undefined);
+  });
 });
 
 describe('refresh token', () => {

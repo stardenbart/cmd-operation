@@ -12,6 +12,7 @@ import pino from 'pino';
 import { bangunBasisDataUji, reset, tutup, AKTOR, IP_UJI } from './bantuan/dbUji.js';
 import { buatApp } from '../src/app.js';
 import { buatAccessToken } from '../src/auth/tokens.js';
+import { shiftPada } from '../src/auth/shift.js';
 
 let pool;
 let pengaturan;
@@ -83,7 +84,7 @@ async function denganServer(kerja) {
 
 const token = (aktor) => buatAccessToken({
   id: aktor.id, kode: aktor.kode, nama: aktor.nama, role: aktor.role,
-});
+}, { shift: shiftPada() });
 
 describe('rute /api/v1/pengaturan', () => {
   test('GET dapat dibaca Operator (bukan rahasia)', async () => {

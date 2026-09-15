@@ -164,7 +164,7 @@ const MODUL = {
     sql: `
       SELECT m.id, m.kode, NULL AS volume_ltr, NULL AS qty_remaining_ltr,
              m.time_check AS waktu, m.status_approval, NULL AS status_fifo,
-             FALSE AS is_gantung, m.rejection_comment,
+             FALSE AS is_gantung, m.lewat_jadwal, m.rejection_comment,
              CONCAT(s.silo_name, ' - pH ', m.ph_check, ', ', m.temp_check, ' C') AS ringkasan,
              o.nama_lengkap AS operator_nama, m.operator_id
         FROM monitoring m
@@ -180,6 +180,10 @@ const MODUL = {
     filter: {
       status: 'm.status_approval = ?',
       siloId: 'm.silo_id = ?',
+      // Ditinjau SPV/QA — cek yang jaraknya dari cek sebelumnya melebihi
+      // monitoring_interval_jam silo (BR-10), tetap tersimpan apa adanya,
+      // lihat services/monitoring.js.
+      lewatJadwal: 'm.lewat_jadwal = TRUE',
       dariTanggal: 'm.time_check >= ?',
       sampaiTanggal: 'm.time_check <= ?',
       cari: 'm.kode LIKE ?',
@@ -447,6 +451,9 @@ export async function daftar(modul, kueri, aktor) {
       // Ditinjau SPV/QA — hanya ada pada modul yang kapasitasnya soft cap
       // (Prepast, Transfer); undefined pada modul lain jadi otomatis false.
       melampauiKapasitas: Boolean(b.melampaui_kapasitas),
+      // Hanya ada pada modul Monitoring (BR-10); undefined di modul lain
+      // jadi otomatis false.
+      lewatJadwal: Boolean(b.lewat_jadwal),
       komentarPenolakan: b.rejection_comment,
       operatorNama: b.operator_nama,
       ...tindakan(b, aktor),
@@ -518,8 +525,9 @@ export async function detail(modul, id) {
        WHERE t.id = ?`,
     monitoring: `
       SELECT m.kode, m.status_approval, m.time_check, m.ph_check, m.temp_check,
+             m.jam_sejak_cek_sebelumnya, m.lewat_jadwal,
              m.rejection_comment, m.created_at, m.updated_at,
-             s.silo_name, o.nama_lengkap AS operator_nama
+             s.silo_name, s.monitoring_interval_jam, o.nama_lengkap AS operator_nama
         FROM monitoring m
         JOIN silo s ON s.id = m.silo_id
         JOIN operator o ON o.id = m.operator_id
@@ -573,6 +581,8 @@ export async function detail(modul, id) {
     monitoring: [
       ['Silo', r.silo_name], ['Waktu cek', r.time_check, 'waktu'],
       ['pH', num(r.ph_check, 2)], ['Suhu (°C)', num(r.temp_check, 1)],
+      ['Jarak dari cek sebelumnya', r.jam_sejak_cek_sebelumnya == null ? null : `${num(r.jam_sejak_cek_sebelumnya, 2)} jam (ambang ${r.monitoring_interval_jam} jam)`],
+      ['Jadwal', r.lewat_jadwal ? 'Lewat jadwal — melebihi ambang interval silo' : null],
     ],
   }[modul];
 

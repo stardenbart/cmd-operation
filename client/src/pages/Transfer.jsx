@@ -23,7 +23,7 @@ const barisKosong = () => ({
  * Mode SAMA memakai waktu bersama; mode MANUAL menyimpan waktu tiap baris.
  */
 function BarisTransfer({
-  index, baris, silos, modeBatch, batchBersama,
+  index, baris, silos, modeBatch, batchBersama, tankBersama, totalPerSilo,
   onUbah, onHapus, bisaHapus,
 }) {
   const { data: ctx } = useQuery({
@@ -33,8 +33,20 @@ function BarisTransfer({
   });
 
   const asal = silos?.data.find((s) => String(s.silo_id) === String(baris.siloAsalId));
+  // Tersedia LIVE — dikurangi volume yang sudah diketik di baris LAIN dengan
+  // Silo asal yang sama, dalam submit multi-baris yang sama. totalPerSilo
+  // menjumlahkan SEMUA baris (termasuk baris ini sendiri), jadi volume baris
+  // ini ditambahkan kembali supaya tidak ikut mengurangi dirinya sendiri.
+  const totalSiloIniSemuaBaris = totalPerSilo?.get(baris.siloAsalId) ?? 0;
+  const volumeBarisIni = angka(baris.volumeLtr) || 0;
+  const tersediaLive = asal
+    ? Number(asal.vol_aktual_ltr) - (totalSiloIniSemuaBaris - volumeBarisIni)
+    : null;
   const keProduksi = baris.jenis === 'PEMAKAIAN PRODUKSI';
-  const tankTerpilih = ctx?.tanks.find((t) => String(t.id) === String(baris.tankId));
+  // Mode SAMA: Tank tujuan satu sumber kebenaran ("Tank tujuan bersama" di
+  // atas), bukan lagi milik baris ini sendiri.
+  const tankIdEfektif = modeBatch === MODE_BATCH.SAMA ? tankBersama : baris.tankId;
+  const tankTerpilih = ctx?.tanks.find((t) => String(t.id) === String(tankIdEfektif));
   const aturanBatch = tankTerpilih?.aturan_batch ?? null;
 
   // Pratinjau kapasitas Pindah Silo — sekadar peringatan, bukan penolakan
@@ -98,19 +110,31 @@ function BarisTransfer({
           </select>
         </Field>
 
-        <Field label="Volume (L)" wajib bantuan={asal ? `Tersedia ${fmt(asal.vol_aktual_ltr)} L` : undefined}>
+        <Field label="Volume (L)" wajib bantuan={asal ? `Tersedia ${fmt(tersediaLive)} L` : undefined}>
           <input className="angka-input" inputMode="decimal" value={baris.volumeLtr} onChange={set('volumeLtr')} required />
         </Field>
 
         {keProduksi ? (
           <>
-            <Field label="Tank tujuan" wajib>
-              <select value={baris.tankId} onChange={set('tankId')} required>
-                <option value="">Pilih tank</option>
-                {ctx?.tanks.map((t) => (
-                  <option key={t.id} value={t.id}>{t.tank_name}</option>
-                ))}
-              </select>
+            <Field
+              label="Tank tujuan"
+              wajib
+              bantuan={modeBatch === MODE_BATCH.SAMA ? 'Sama untuk semua baris — diatur di atas' : undefined}
+            >
+              {modeBatch === MODE_BATCH.SAMA ? (
+                <input
+                  value={tankTerpilih?.tank_name ?? 'Pilih Tank tujuan bersama di atas'}
+                  readOnly
+                  disabled
+                />
+              ) : (
+                <select value={baris.tankId} onChange={set('tankId')} required>
+                  <option value="">Pilih tank</option>
+                  {ctx?.tanks.map((t) => (
+                    <option key={t.id} value={t.id}>{t.tank_name}</option>
+                  ))}
+                </select>
+              )}
             </Field>
 
             {aturanBatch === 'TETAP_CMD2' && (
@@ -189,12 +213,13 @@ function nomorBatchValid(nilai) {
   return Number.isInteger(nomor) && nomor > 0;
 }
 
-function barisValid(b, tanks, modeBatch, batchBersama) {
+function barisValid(b, tanks, modeBatch, batchBersama, tankBersama) {
   if (modeBatch === MODE_BATCH.MANUAL && !b.trfTime) return false;
   if (!b.siloAsalId || !(angka(b.volumeLtr) > 0)) return false;
   if (b.jenis === 'PEMAKAIAN PRODUKSI') {
-    if (!b.tankId) return false;
-    const tank = tanks?.find((t) => String(t.id) === String(b.tankId));
+    const tankId = modeBatch === MODE_BATCH.SAMA ? tankBersama : b.tankId;
+    if (!tankId) return false;
+    const tank = tanks?.find((t) => String(t.id) === String(tankId));
     if (!tank) return false;
     if (tank.aturan_batch === 'PILIH') {
       const sumber = modeBatch === MODE_BATCH.SAMA ? batchBersama : b;
@@ -211,6 +236,11 @@ export default function Transfer() {
   const [rows, setRows] = useState([barisKosong()]);
   const [modeBatch, setModeBatch] = useState(MODE_BATCH.SAMA);
   const [batchBersama, setBatchBersama] = useState({ batchPrefix: '', batchNomor: '' });
+  // Mode SAMA berarti seluruh Pemakaian Produksi dalam submit ini menuju
+  // tank yang SAMA — bukan sekadar saran per baris, tapi satu sumber
+  // kebenaran (sama seperti Batch bersama), supaya tidak bisa diam-diam
+  // berbeda antar baris.
+  const [tankBersama, setTankBersama] = useState('');
   const [sukses, setSukses] = useState(null);
 
   const { data: silos } = useQuery({ queryKey: ['silos'], queryFn: () => api.get('/silos') });
@@ -222,6 +252,12 @@ export default function Transfer() {
     queryFn: () => api.get(`/transfer/form-context/${siloKonteks}`),
     enabled: Boolean(siloKonteks),
   });
+  // Aturan batch tank yang dipilih di "Tank tujuan bersama" - dipakai untuk
+  // menyembunyikan "Batch bersama" saat sudah terkunci (CMD2) atau memang
+  // tidak berbatch, supaya tidak terlihat seperti wajib diisi padahal
+  // diabaikan sepenuhnya per baris (lihat BarisTransfer).
+  const aturanBatchBersama = konteksBatch?.tanks
+    .find((t) => String(t.id) === String(tankBersama))?.aturan_batch ?? null;
 
   const simpan = useMutation({
     mutationFn: (body) => api.post('/transfer/batch', body),
@@ -240,6 +276,7 @@ export default function Transfer() {
       setRows([barisKosong()]);
       setTrfTime('');
       setBatchBersama({ batchPrefix: '', batchNomor: '' });
+      setTankBersama('');
       qc.invalidateQueries({ queryKey: ['silos'] });
       qc.invalidateQueries({ queryKey: ['transfer'] });
     },
@@ -247,7 +284,17 @@ export default function Transfer() {
 
   const ubahBaris = (i, nilai) => setRows(rows.map((r, idx) => (idx === i ? nilai : r)));
   const hapusBaris = (i) => setRows(rows.filter((_, idx) => idx !== i));
-  const tambahBaris = () => setRows([...rows, barisKosong()]);
+  const tambahBaris = () => {
+    // Tank tujuan sudah dijamin sama lewat "Tank tujuan bersama" (satu sumber
+    // kebenaran, bukan per baris) — di sini baris baru cukup ikut Jenis dan
+    // Silo tujuan baris terakhir (relevan untuk Pindah Silo) sebagai saran,
+    // tetap bebas diganti per baris.
+    const terakhir = rows[rows.length - 1];
+    const carryOver = modeBatch === MODE_BATCH.SAMA && terakhir
+      ? { jenis: terakhir.jenis, siloTujuanId: terakhir.siloTujuanId }
+      : {};
+    setRows([...rows, { ...barisKosong(), ...carryOver }]);
+  };
 
   // Peringatan bila total volume per silo melampaui yang tersedia. Server tetap
   // menegakkan FIFO; ini hanya memberi tahu lebih awal sebelum submit.
@@ -262,7 +309,7 @@ export default function Transfer() {
   }).map(([id]) => silos?.data.find((x) => String(x.silo_id) === String(id))?.silo_name);
 
   const semuaValid = rows.length > 0 && rows.every((r) => barisValid(
-    r, konteksBatch?.tanks, modeBatch, batchBersama,
+    r, konteksBatch?.tanks, modeBatch, batchBersama, tankBersama,
   ));
   const waktuValid = modeBatch === MODE_BATCH.SAMA ? Boolean(trfTime) : true;
   const bisaKirim = waktuValid && semuaValid && siloLebih.length === 0 && !simpan.isPending;
@@ -280,7 +327,7 @@ export default function Transfer() {
         volumeLtr: r.volumeLtr,
         ...(r.jenis === 'PEMAKAIAN PRODUKSI'
           ? {
-            tankId: Number(r.tankId),
+            tankId: Number(modeBatch === MODE_BATCH.SAMA ? tankBersama : r.tankId),
             ...(modeBatch === MODE_BATCH.MANUAL
               ? { batchPrefix: r.batchPrefix, batchNomor: r.batchNomor }
               : {}),
@@ -319,38 +366,63 @@ export default function Transfer() {
                 />
               </Field>
               <Field
-                label="Batch bersama"
-                bantuan="Dipakai semua transfer ke tank yang aturan batch-nya PILIH"
+                label="Tank tujuan bersama"
+                bantuan="Dipakai semua transfer Pemakaian produksi dalam submit ini"
               >
-                <div className="baris" style={{ gap: 8, flexWrap: 'nowrap' }}>
-                  <select
-                    value={batchBersama.batchPrefix}
-                    onChange={(e) => setBatchBersama((lama) => ({
-                      ...lama, batchPrefix: e.target.value,
-                    }))}
-                    disabled={!siloKonteks}
-                    style={{ flex: 1 }}
-                  >
-                    <option value="">{siloKonteks ? 'Prefiks' : 'Pilih silo asal dahulu'}</option>
-                    {konteksBatch?.prefiksBatch.map((p) => (
-                      <option key={p.kode} value={p.kode}>
-                        {p.kode}{p.is_standar ? '' : ' (non-baku)'}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    className="angka-input"
-                    inputMode="numeric"
-                    style={{ width: 90 }}
-                    value={batchBersama.batchNomor}
-                    onChange={(e) => setBatchBersama((lama) => ({
-                      ...lama, batchNomor: e.target.value,
-                    }))}
-                    placeholder="5"
-                    disabled={!siloKonteks}
-                  />
-                </div>
+                <select
+                  value={tankBersama}
+                  onChange={(e) => setTankBersama(e.target.value)}
+                  disabled={!siloKonteks}
+                >
+                  <option value="">{siloKonteks ? 'Pilih tank' : 'Pilih silo asal dahulu'}</option>
+                  {konteksBatch?.tanks.map((t) => (
+                    <option key={t.id} value={t.id}>{t.tank_name}</option>
+                  ))}
+                </select>
               </Field>
+              {aturanBatchBersama === 'TETAP_CMD2' ? (
+                <Field label="Batch bersama" bantuan="Ditentukan tangkinya, tidak dapat diubah">
+                  <input value="Tank ini sudah berbatch tetap CMD2 — tidak perlu diisi" readOnly disabled />
+                </Field>
+              ) : aturanBatchBersama === 'TANPA_BATCH' ? (
+                <Field label="Batch bersama" bantuan="Tank ini tidak berbatch">
+                  <input value="Tidak berbatch" readOnly disabled />
+                </Field>
+              ) : (
+                <Field
+                  label="Batch bersama"
+                  bantuan="Dipakai semua transfer ke tank yang aturan batch-nya PILIH"
+                >
+                  <div className="baris" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <select
+                      value={batchBersama.batchPrefix}
+                      onChange={(e) => setBatchBersama((lama) => ({
+                        ...lama, batchPrefix: e.target.value,
+                      }))}
+                      disabled={!siloKonteks}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="">{siloKonteks ? 'Prefiks' : 'Pilih silo asal dahulu'}</option>
+                      {konteksBatch?.prefiksBatch.map((p) => (
+                        <option key={p.kode} value={p.kode}>
+                          {p.kode}{p.is_standar ? '' : ' (non-baku)'}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="angka-input"
+                      inputMode="numeric"
+                      style={{ width: 90 }}
+                      value={batchBersama.batchNomor}
+                      onChange={(e) => setBatchBersama((lama) => ({
+                        ...lama, batchNomor: e.target.value,
+                      }))}
+                      placeholder="5"
+                      disabled={!siloKonteks}
+                    />
+                  </div>
+                </Field>
+              )}
             </>
           )}
         </div>
@@ -364,6 +436,8 @@ export default function Transfer() {
           silos={silos}
           modeBatch={modeBatch}
           batchBersama={batchBersama}
+          tankBersama={tankBersama}
+          totalPerSilo={totalPerSilo}
           onUbah={ubahBaris}
           onHapus={hapusBaris}
           bisaHapus={rows.length > 1}

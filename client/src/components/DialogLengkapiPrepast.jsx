@@ -31,11 +31,18 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   useEffect(() => {
     if (!data?.data) return;
     const d = data.data;
+    // Selesai disimpan sebagai TANGGAL dan JAM terpisah — sama seperti di
+    // Prepast.jsx — supaya tanggalnya bisa disarankan dari Mulai sementara
+    // jamnya benar-benar kosong, bukan dipalsukan.
+    const selesaiWib = isoKeInputWib(d.prepastFinish);
     setNilai({
       siloId: d.siloId ?? '',
       volumeLtr: d.volumeLtr ?? '',
       prepastStart: isoKeInputWib(d.prepastStart),
-      prepastFinish: isoKeInputWib(d.prepastFinish),
+      // BR-16 — kalau Selesai sungguhan belum ada, muat ulang tanggal yang
+      // sempat diketik sebelumnya (draft) supaya tidak hilang begitu saja.
+      prepastFinishTanggal: selesaiWib.slice(0, 10) || (d.prepastFinishDraftTanggal ?? ''),
+      prepastFinishJam: selesaiWib.slice(11, 16),
       flowrate: d.flowrate ?? '',
       tempAfterHeater: d.tempAfterHeater ?? '',
       tempOutput: d.tempOutput ?? '',
@@ -71,16 +78,31 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
     },
   });
 
-  const set = (key) => (e) => setNilai((lama) => ({ ...lama, [key]: e.target.value }));
+  const set = (key) => (e) => {
+    const nilaiBaru = e.target.value;
+    setNilai((lama) => {
+      const perubahan = { [key]: nilaiBaru };
+      // Tanggal Selesai ikut Mulai — sama seperti Prepast.jsx — jamnya tidak
+      // ikut sama sekali, dan tidak menimpa tanggal yang sudah diisi sendiri.
+      if (key === 'prepastStart' && !lama.prepastFinishTanggal && nilaiBaru.length >= 10) {
+        perubahan.prepastFinishTanggal = nilaiBaru.slice(0, 10);
+      }
+      return { ...lama, ...perubahan };
+    });
+  };
   const ubahTambahan = (i, k, v) =>
     setPecahanTambahan(pecahanTambahan.map((p, idx) => (idx === i ? { ...p, [k]: v } : p)));
 
-  const primaryTerkunci = data?.data?.volumeLtr != null;
   const sisaIndukLtr = data?.data?.sisaIndukLtr ?? null;
-  // Volume record utama baru ikut "memperebutkan" sisa induk selama belum
-  // terkunci — begitu sudah terkunci, potongannya sudah tercermin di
-  // sisaIndukLtr itu sendiri (dikurangi saat pelengkapan sebelumnya).
-  const volumeUtamaDiketik = !primaryTerkunci ? (angka(nilai.volumeLtr) || 0) : 0;
+  // Volume record utama yang SUDAH tersimpan sebelumnya (null bila belum
+  // pernah). Dipakai untuk menghitung DELTA, bukan nilai penuh — sisaIndukLtr
+  // dari server sudah memotong angka lama ini, jadi yang "memperebutkan" sisa
+  // di pratinjau ini cuma selisih antara yang sedang diketik dan yang sudah
+  // tersimpan (0 kalau tidak diubah sama sekali).
+  const volumeAsliLtr = data?.data?.volumeLtr != null ? Number(data.data.volumeLtr) : null;
+  const volumeUtamaDiketik = volumeAsliLtr != null
+    ? (angka(nilai.volumeLtr) || 0) - volumeAsliLtr
+    : (angka(nilai.volumeLtr) || 0);
   const totalTambahan = pecahanTambahan.reduce((s, p) => s + (angka(p.volumeLtr) || 0), 0);
   const totalDialokasikan = volumeUtamaDiketik + totalTambahan;
   const sisaAlokasi = sisaIndukLtr === null ? null
@@ -90,7 +112,7 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   // muncul lagi di baris berikutnya — sama seperti form Prepast baru (FR-29.5).
   const siloTersedia = (idx) => {
     const dipakai = new Set([
-      primaryTerkunci ? null : nilai.siloId,
+      nilai.siloId,
       ...pecahanTambahan.filter((_, i) => i !== idx).map((p) => p.siloId),
     ].filter((v) => v !== '' && v != null).map(String));
     return (data?.data?.siloTujuan ?? []).filter((s) => !dipakai.has(String(s.silo_id)));
@@ -122,9 +144,23 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   );
 
   function kirim() {
+    // Digabung hanya kalau DUA-DUANYA terisi — tanggal saja tanpa jam bukan
+    // waktu yang bisa dikirim (persis alasan keduanya field terpisah).
+    const prepastFinish = (nilai.prepastFinishTanggal && nilai.prepastFinishJam)
+      ? `${nilai.prepastFinishTanggal}T${nilai.prepastFinishJam}`
+      : '';
+
     const body = {};
     for (const [key, value] of Object.entries(nilai)) {
+      if (key === 'prepastFinishTanggal' || key === 'prepastFinishJam') continue;
       if (value !== '') body[key] = value;
+    }
+    if (prepastFinish) {
+      body.prepastFinish = prepastFinish;
+    } else if (nilai.prepastFinishTanggal) {
+      // BR-16 — Tanggal sudah diisi tapi Jam belum; simpan sebagai draft
+      // supaya tidak hilang saat dialog ini dibuka lagi nanti.
+      body.prepastFinishDraftTanggal = nilai.prepastFinishTanggal;
     }
 
     // Baris kosong sama sekali (belum diisi apa-apa) tidak dikirim — cuma
@@ -137,7 +173,7 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
       }));
     if (tambahanSiap.length > 0) body.pecahanTambahan = tambahanSiap;
 
-    if (nilai.prepastFinish && nilai.prepastStart && nilai.prepastFinish <= nilai.prepastStart) {
+    if (prepastFinish && nilai.prepastStart && prepastFinish <= nilai.prepastStart) {
       const setuju = window.confirm(
         'Waktu selesai lebih awal dari waktu mulai. Konfirmasi bahwa proses melewati tengah malam.',
       );
@@ -158,8 +194,9 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
   }
 
   const kosong = data?.data?.fieldKosong ?? [];
-  const pratinjauUtama = !isLoading && !primaryTerkunci
-    ? pratinjauKapasitas(nilai.siloId, nilai.volumeLtr) : null;
+  // Berlaku juga saat Volume sudah pernah tersimpan — sekarang boleh diedit
+  // ulang, jadi pratinjau kapasitasnya tetap relevan untuk nilai barunya.
+  const pratinjauUtama = !isLoading ? pratinjauKapasitas(nilai.siloId, nilai.volumeLtr) : null;
 
   return (
     <div className="kartu tumpuk">
@@ -209,22 +246,43 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
             label="Volume (L)"
             bantuan={data?.data?.bjIndukBelumDiisi
               ? `Menunggu Berat Jenis Receiving ${data.data.indukKode}`
-              : 'Boleh tetap kosong; record masih masuk Perlu dilengkapi'}
+              : data?.data?.volumeLtr != null
+                ? 'Sudah tersimpan — boleh diubah selama record masih Gantung/Pending'
+                : 'Boleh tetap kosong; record masih masuk Perlu dilengkapi'}
           >
             <input
               className="angka-input"
               inputMode="decimal"
               value={nilai.volumeLtr ?? ''}
               onChange={set('volumeLtr')}
-              disabled={data?.data?.volumeLtr != null || data?.data?.bjIndukBelumDiisi}
+              // Silo tetap terkunci begitu tersimpan (beda tangki, beda anchor
+              // standing time) — tapi Volume boleh diganti selama Berat Jenis
+              // induknya sudah diketahui, selama record masih Gantung/Pending
+              // (dijamin server, bukan di sini).
+              disabled={data?.data?.bjIndukBelumDiisi}
             />
           </Field>
           <Field label="Mulai" wajib>
             <input type="datetime-local" value={nilai.prepastStart ?? ''} onChange={set('prepastStart')} />
           </Field>
-          <Field label="Selesai">
-            <input type="datetime-local" value={nilai.prepastFinish ?? ''} onChange={set('prepastFinish')} />
-          </Field>
+          <div style={{ gridColumn: 'span 2' }}>
+            <Field label="Selesai" bantuan="Tanggal ikut Mulai, jam diisi sendiri">
+              <div className="baris" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <input
+                  type="date"
+                  value={nilai.prepastFinishTanggal ?? ''}
+                  onChange={set('prepastFinishTanggal')}
+                  style={{ flex: 1, minWidth: 150 }}
+                />
+                <input
+                  type="time"
+                  value={nilai.prepastFinishJam ?? ''}
+                  onChange={set('prepastFinishJam')}
+                  style={{ flex: 1, minWidth: 130 }}
+                />
+              </div>
+            </Field>
+          </div>
           <Field label="Flowrate">
             <input className="angka-input" inputMode="decimal" value={nilai.flowrate ?? ''} onChange={set('flowrate')} />
           </Field>
@@ -239,11 +297,17 @@ export default function DialogLengkapiPrepast({ target, onTutup, onSukses }) {
 
       {pratinjauUtama && pesanPratinjau(pratinjauUtama)}
 
-      {/* Silo tambahan hanya bermakna selama Volume record utama masih bisa
-          diisi di sini — begitu sudah terkunci, sisa batch induk sudah
-          diserap record ini dan menambah silo di sini tidak lagi relevan
-          untuk alur pelengkapan yang sedang berjalan. */}
-      {!isLoading && !primaryTerkunci && !data?.data?.bjIndukBelumDiisi && (
+      {/* Silo tambahan TIDAK digerbang oleh sisaIndukLtr saat ini — itu
+          angka STATIS dari server, sedangkan Volume record utama sekarang
+          boleh DITURUNKAN di form ini juga, yang baru membebaskan ruang
+          setelah disimpan. Kalau digerbang begitu, kasus paling umum justru
+          hilang: batch yang sudah habis teralokasi ke SATU silo (sisaIndukLtr
+          = 0) tapi Volume-nya mau dikurangi supaya sisanya dipecah ke silo
+          lain — "Sisakan ke baris akhir" & ringkasan Teralokasi di bawah
+          sudah menghitung ruang yang SUNGGUH tersedia secara live (termasuk
+          pengurangan yang sedang diketik), jadi cukup Berat Jenis induk yang
+          jadi syarat tampil. */}
+      {!isLoading && !data?.data?.bjIndukBelumDiisi && (
         <div className="tumpuk" style={{ gap: 10 }}>
           <div className="kartu__kepala">
             <h3 style={{ fontSize: 14, margin: 0 }}>Silo tambahan</h3>
