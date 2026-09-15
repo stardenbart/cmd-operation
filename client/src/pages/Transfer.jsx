@@ -252,6 +252,12 @@ export default function Transfer() {
     queryFn: () => api.get(`/transfer/form-context/${siloKonteks}`),
     enabled: Boolean(siloKonteks),
   });
+  // Aturan batch tank yang dipilih di "Tank tujuan bersama" - dipakai untuk
+  // menyembunyikan "Batch bersama" saat sudah terkunci (CMD2) atau memang
+  // tidak berbatch, supaya tidak terlihat seperti wajib diisi padahal
+  // diabaikan sepenuhnya per baris (lihat BarisTransfer).
+  const aturanBatchBersama = konteksBatch?.tanks
+    .find((t) => String(t.id) === String(tankBersama))?.aturan_batch ?? null;
 
   const simpan = useMutation({
     mutationFn: (body) => api.post('/transfer/batch', body),
@@ -374,39 +380,49 @@ export default function Transfer() {
                   ))}
                 </select>
               </Field>
-              <Field
-                label="Batch bersama"
-                bantuan="Dipakai semua transfer ke tank yang aturan batch-nya PILIH"
-              >
-                <div className="baris" style={{ gap: 8, flexWrap: 'nowrap' }}>
-                  <select
-                    value={batchBersama.batchPrefix}
-                    onChange={(e) => setBatchBersama((lama) => ({
-                      ...lama, batchPrefix: e.target.value,
-                    }))}
-                    disabled={!siloKonteks}
-                    style={{ flex: 1 }}
-                  >
-                    <option value="">{siloKonteks ? 'Prefiks' : 'Pilih silo asal dahulu'}</option>
-                    {konteksBatch?.prefiksBatch.map((p) => (
-                      <option key={p.kode} value={p.kode}>
-                        {p.kode}{p.is_standar ? '' : ' (non-baku)'}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    className="angka-input"
-                    inputMode="numeric"
-                    style={{ width: 90 }}
-                    value={batchBersama.batchNomor}
-                    onChange={(e) => setBatchBersama((lama) => ({
-                      ...lama, batchNomor: e.target.value,
-                    }))}
-                    placeholder="5"
-                    disabled={!siloKonteks}
-                  />
-                </div>
-              </Field>
+              {aturanBatchBersama === 'TETAP_CMD2' ? (
+                <Field label="Batch bersama" bantuan="Ditentukan tangkinya, tidak dapat diubah">
+                  <input value="Tank ini sudah berbatch tetap CMD2 — tidak perlu diisi" readOnly disabled />
+                </Field>
+              ) : aturanBatchBersama === 'TANPA_BATCH' ? (
+                <Field label="Batch bersama" bantuan="Tank ini tidak berbatch">
+                  <input value="Tidak berbatch" readOnly disabled />
+                </Field>
+              ) : (
+                <Field
+                  label="Batch bersama"
+                  bantuan="Dipakai semua transfer ke tank yang aturan batch-nya PILIH"
+                >
+                  <div className="baris" style={{ gap: 8, flexWrap: 'nowrap' }}>
+                    <select
+                      value={batchBersama.batchPrefix}
+                      onChange={(e) => setBatchBersama((lama) => ({
+                        ...lama, batchPrefix: e.target.value,
+                      }))}
+                      disabled={!siloKonteks}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="">{siloKonteks ? 'Prefiks' : 'Pilih silo asal dahulu'}</option>
+                      {konteksBatch?.prefiksBatch.map((p) => (
+                        <option key={p.kode} value={p.kode}>
+                          {p.kode}{p.is_standar ? '' : ' (non-baku)'}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="angka-input"
+                      inputMode="numeric"
+                      style={{ width: 90 }}
+                      value={batchBersama.batchNomor}
+                      onChange={(e) => setBatchBersama((lama) => ({
+                        ...lama, batchNomor: e.target.value,
+                      }))}
+                      placeholder="5"
+                      disabled={!siloKonteks}
+                    />
+                  </div>
+                </Field>
+              )}
             </>
           )}
         </div>
