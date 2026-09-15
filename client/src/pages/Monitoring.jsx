@@ -31,6 +31,10 @@ export default function Monitoring() {
   const [timeCheck, setTimeCheck] = useState(sekarangLokal);
   const [isian, setIsian] = useState({});
   const [sukses, setSukses] = useState(null);
+  // Terpisah dari pesan sukses (BR-10) — sebelumnya ditempel jadi satu
+  // paragraf di dalam banner hijau biasa dan gampang tidak terlihat.
+  // Sekarang alert waspada sendiri, sama seperti pH di luar rentang.
+  const [lewatJadwalTerakhir, setLewatJadwalTerakhir] = useState([]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['monitoring', 'round-context'],
@@ -47,14 +51,12 @@ export default function Monitoring() {
       if (d.diLuarRentang.length > 0) {
         pesan += ` pH di luar rentang pada ${d.diLuarRentang.map((x) => `${x.siloName} (${x.ph})`).join(', ')}.`;
       }
-      // BR-10 — tetap tersimpan (tidak ditolak), cuma diberi tahu di sini
-      // supaya celah jadwal tidak lewat tanpa disadari operator sendiri.
-      if (d.lewatJadwal.length > 0) {
-        pesan += ` Perhatian — lewat jadwal: ${
-          d.lewatJadwal.map((x) => `${x.siloName} (+${x.jamSejakCekSebelumnya} jam dari ambang ${x.ambangJam} jam)`).join(', ')
-        }.`;
-      }
       setSukses(pesan);
+      // BR-10 — tetap tersimpan (tidak ditolak), tapi ditandai lewat alert
+      // waspada TERPISAH supaya celah jadwal tidak lewat tanpa disadari
+      // operator sendiri (sebelumnya ditempel di pesan sukses dan gampang
+      // tidak terlihat).
+      setLewatJadwalTerakhir(d.lewatJadwal);
       setIsian({});
       qc.invalidateQueries({ queryKey: ['silos'] });
       qc.invalidateQueries({ queryKey: ['monitoring'] });
@@ -79,6 +81,7 @@ export default function Monitoring() {
   function kirim(e) {
     e.preventDefault();
     setSukses(null);
+    setLewatJadwalTerakhir([]);
     simpan.mutate({
       timeCheck,
       hasil: terisi.map((s) => ({
@@ -98,6 +101,12 @@ export default function Monitoring() {
         </div>
 
         <PesanSukses>{sukses}</PesanSukses>
+        {lewatJadwalTerakhir.length > 0 && (
+          <div className="pesan pesan--waspada" role="alert">
+            Perhatian — lewat jadwal: {lewatJadwalTerakhir.map((x) => `${x.siloName} (+${x.jamSejakCekSebelumnya} jam dari ambang ${x.ambangJam} jam)`).join(', ')}.
+            {' '}Data tetap tersimpan, tetapi celah ini tercatat dan dapat ditinjau lewat Data List.
+          </div>
+        )}
         <PesanGalat galat={simpan.error} onTutup={() => simpan.reset()} />
 
         <div style={{ maxWidth: 280 }}>
