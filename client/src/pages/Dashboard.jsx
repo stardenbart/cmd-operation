@@ -89,7 +89,14 @@ function PengingatGantung() {
                 <button
                   type="button"
                   className="btn btn--utama btn--kecil"
-                  onClick={() => ke(`/data?modul=${d.modul}&cari=${encodeURIComponent(d.kode)}`)}
+                  onClick={() => ke(
+                    // Prepast punya panel "Lengkapi"-nya sendiri di halaman
+                    // Prepast — mendarat di sana langsung dengan dialognya
+                    // terbuka, bukan di Data List yang masih harus dicari lagi.
+                    d.modul === 'prepast'
+                      ? `/prepast?lengkapi=${d.id}`
+                      : `/data?modul=${d.modul}&cari=${encodeURIComponent(d.kode)}`,
+                  )}
                   disabled={!d.bolehSayaLengkapi}
                   title={d.bolehSayaLengkapi
                     ? 'Buka untuk dilengkapi'
