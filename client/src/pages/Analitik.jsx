@@ -146,8 +146,14 @@ function SesiPrepast({ sesi }) {
             <div className="analitik-sesi__blok">
               <div className="label">Masuk ke {s.siloName}</div>
               <TabelGrafik
-                kolom={[{ k: 'jam', label: 'Jam' }, { k: 'supplier', label: 'Supplier' }]}
-                baris={s.masuk.map((m) => ({ jam: waktuSingkat(m.jam), supplier: m.supplier }))}
+                kolom={[
+                  { k: 'volume', label: 'Volume (L)', num: true },
+                  { k: 'jam', label: 'Jam' },
+                  { k: 'supplier', label: 'Supplier' },
+                ]}
+                baris={s.masuk.map((m) => ({
+                  volume: m.volumeLtr, jam: waktuSingkat(m.jam), supplier: m.supplier,
+                }))}
               />
             </div>
             <div className="analitik-sesi__blok">

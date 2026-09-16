@@ -487,6 +487,7 @@ describe('FR-33 - sesi prepast (mode Sesi)', () => {
     assert.ok(s, 'ada sesi SILO1');
     assert.ok(Array.isArray(s.masuk) && s.masuk.length >= 1, 'tabel IN ada');
     assert.ok(s.masuk[0].supplier, 'IN membawa supplier');
+    assert.equal(s.masuk[0].volumeLtr, 1000, 'IN membawa volume prepast-nya sendiri');
     assert.ok(Array.isArray(s.keluar) && s.keluar.length >= 1, 'tabel OUT ada');
     assert.equal(s.keluar[0].volume, 400);
     assert.ok('standingMenit' in s.keluar[0]);
