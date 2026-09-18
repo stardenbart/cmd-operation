@@ -998,7 +998,8 @@ export async function semuaGrafik(r) {
  *
  * Tiap sesi (dikelompokkan per silo oleh kontinuitasPrepast) dibawa dengan DUA
  * daftar terpisah:
- *  - masuk:  prepast yang mengisi silo (Jam = prepast_start, Supplier, Volume).
+ *  - masuk:  prepast yang mengisi silo (Masuk = prepast_start, Selesai = prepast_finish,
+ *            Supplier, Volume).
  *  - keluar: transfer yang MENARIK dari batch sesi itu (lewat FIFO allocation),
  *            satu baris per transfer: Volume, Standing Time (prepast_finish ->
  *            trf_time), TS% (tertimbang dari nilai_ts batch sumber), Jam, Kemana.
@@ -1067,7 +1068,7 @@ export async function sesiDetail(r) {
       // FR-33.3.8 - sesi belum punya finish final = masih berjalan.
       sedangBerjalan: !s.finish,
       masuk: s.records.map((rec) => ({
-        jam: rec.start, supplier: rec.supplierName, volumeLtr: rec.volumeLtr,
+        jam: rec.start, selesai: rec.finish, supplier: rec.supplierName, volumeLtr: rec.volumeLtr,
       })),
       keluar: [...(outPerSesi.get(s.id)?.values() ?? [])]
         .sort((a, b) => new Date(a.jam) - new Date(b.jam))
