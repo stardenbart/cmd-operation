@@ -167,7 +167,7 @@ export function RingkasanStok({ ringkasan, buffer, onBuffer, onKgBelumTerkonvers
   const isiBuffer = buffer && (
     <>
       <div className="angka-besar">{fmt(buffer.vol_aktual_ltr)} L</div>
-      <div className="label">Di buffer · {buffer.jumlah_batch_aktif} batch</div>
+      <div className="label">Di SILO7 (BUFFER) · {buffer.jumlah_batch_aktif} batch</div>
     </>
   );
   // Kg yang belum dapat dikonversi ke liter karena Berat Jenis Receiving-nya
