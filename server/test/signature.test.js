@@ -157,6 +157,21 @@ describe('Endpoint /api/v1/auth/signature - SELALU milik sendiri', () => {
     assert.equal(res.status, 401);
   });
 
+  test('SPV ditolak 403 - tanda tangan khusus peran Operator (2026-09-18)', async () => {
+    const get = await fetch(url('/api/v1/auth/signature'), { headers: authHeader(AKTOR.spv) });
+    assert.equal(get.status, 403);
+
+    const post = await fetch(url('/api/v1/auth/signature'), {
+      method: 'POST',
+      headers: { ...authHeader(AKTOR.spv), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gambar: `data:image/png;base64,${(await pngUji()).toString('base64')}` }),
+    });
+    assert.equal(post.status, 403);
+
+    const del = await fetch(url('/api/v1/auth/signature'), { method: 'DELETE', headers: authHeader(AKTOR.spv) });
+    assert.equal(del.status, 403);
+  });
+
   test('milik SPV tidak terusik saat operator mengatur miliknya sendiri', async () => {
     await signature.simpanTandaTangan(AKTOR.spv.id, await pngUji());
     await fetch(url('/api/v1/auth/signature'), {

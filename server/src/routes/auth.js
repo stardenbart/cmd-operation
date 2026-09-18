@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as auth from '../auth/service.js';
 import { aksiUntukUser } from '../auth/permissions.js';
 import { wajibLogin } from '../middleware/auth.js';
-import { asyncHandler, AppError } from '../middleware/errors.js';
+import { asyncHandler, AppError, ForbiddenError } from '../middleware/errors.js';
 import { simpanTandaTangan, hapusTandaTangan, ambilTandaTangan } from '../services/signature.js';
 
 const router = Router();
@@ -154,10 +154,23 @@ router.get(
  * Sama seperti Ganti Password: milik pribadi, tidak diwakilkan lewat rute
  * ini (Admin yang benar-benar perlu mengelola punya orang lain memakai
  * jalur Master Data terpisah, bukan endpoint ini).
+ *
+ * Khusus peran Operator (2026-09-18) - Paraf di form GMP memang identitas
+ * siapa yang mengerjakan secara fisik. SPV/Admin/Viewer boleh membuat
+ * transaksi juga (TRANSAKSI_BUAT), tapi tidak dituntut tanda tangan untuk
+ * itu; sel Parafnya dibiarkan kosong oleh formExcel.js, bukan dipaksa isi.
  */
+function wajibPeranOperator(req, res, next) {
+  if (req.user.role !== 'Operator') {
+    return next(new ForbiddenError('Tanda tangan digital khusus peran Operator'));
+  }
+  return next();
+}
+
 router.get(
   '/signature',
   wajibLogin,
+  wajibPeranOperator,
   asyncHandler(async (req, res) => {
     const png = await ambilTandaTangan(req.user.id);
     res.json({
@@ -170,6 +183,7 @@ router.get(
 router.post(
   '/signature',
   wajibLogin,
+  wajibPeranOperator,
   validasi(skemaSimpanTandaTangan),
   asyncHandler(async (req, res) => {
     const cocok = /^data:image\/png;base64,(.+)$/.exec(req.body.gambar);
@@ -184,6 +198,7 @@ router.post(
 router.delete(
   '/signature',
   wajibLogin,
+  wajibPeranOperator,
   asyncHandler(async (req, res) => {
     await hapusTandaTangan(req.user.id);
     res.json({ pesan: 'Tanda tangan dihapus.' });

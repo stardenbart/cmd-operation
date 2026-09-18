@@ -267,14 +267,16 @@ function Kerangka({ children }) {
             <span className="hanya-lebar">Ganti password</span>
             <span className="hanya-sempit">Password</span>
           </button>
-          <button
-            type="button" className="btn btn--kecil btn--kedua"
-            onClick={() => setTandaTangan((v) => !v)}
-            aria-label="Tanda tangan saya"
-          >
-            <span className="hanya-lebar">Tanda Tangan Saya</span>
-            <span className="hanya-sempit">Ttd</span>
-          </button>
+          {operator.role === 'Operator' && (
+            <button
+              type="button" className="btn btn--kecil btn--kedua"
+              onClick={() => setTandaTangan((v) => !v)}
+              aria-label="Tanda tangan saya"
+            >
+              <span className="hanya-lebar">Tanda Tangan Saya</span>
+              <span className="hanya-sempit">Ttd</span>
+            </button>
+          )}
           <button type="button" className="btn btn--kecil btn--kedua" onClick={tanganiKeluar}>
             Keluar
           </button>
