@@ -59,6 +59,10 @@ services:
       DB_USER: ${DB_USER:-fm_app}
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?wajib diisi di .env}
+      # Dasar tautan publik (QR "Diperiksa Oleh", Halaman 2) - tanpa ini
+      # config.js jatuh ke default 'http://localhost:3001' di dalam
+      # container, yang tidak pernah bisa dibuka dari luar mesin server.
+      APP_URL: ${APP_URL:?wajib diisi di .env}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
       # Zona proses harus sama dengan zona pabrik. Timestamp database tetap UTC;
       # konversi/validasi datetime-local berlangsung di Asia/Jakarta.
