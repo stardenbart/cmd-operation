@@ -193,4 +193,5 @@ export const api = {
   get: (path) => kirim(path),
   post: (path, body) => kirim(path, { method: 'POST', body }),
   patch: (path, body) => kirim(path, { method: 'PATCH', body }),
+  delete: (path) => kirim(path, { method: 'DELETE' }),
 };

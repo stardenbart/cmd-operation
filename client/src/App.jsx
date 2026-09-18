@@ -4,6 +4,7 @@ import { useAuth } from './lib/auth.jsx';
 import { msSampaiPergantianShift } from './lib/shift.js';
 import Login from './pages/Login.jsx';
 import DialogGantiPassword from './components/DialogGantiPassword.jsx';
+import DialogTandaTangan from './components/DialogTandaTangan.jsx';
 import PasangPWA from './components/PasangPWA.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Analitik from './pages/Analitik.jsx';
@@ -23,6 +24,7 @@ import Panduan from './pages/Panduan.jsx';
 import ImportData from './pages/ImportData.jsx';
 import LossesManagement from './pages/LossesManagement.jsx';
 import PublicDashboard from './pages/PublicDashboard.jsx';
+import PublicApprovalHarian from './pages/PublicApprovalHarian.jsx';
 import { Kosong } from './components/ui.jsx';
 import './styles/app.css';
 
@@ -164,6 +166,7 @@ function Kerangka({ children }) {
   const navigate = useNavigate();
   const lokasi = useLocation();
   const [gantiPassword, setGantiPassword] = useState(false);
+  const [tandaTangan, setTandaTangan] = useState(false);
   const [sidebarTampil, setSidebarTampil] = useState(() => bacaPref('nav:tampil', true));
   const [grupTerbuka, setGrupTerbuka] = useState(() => bacaPref('nav:grup', {}));
   const [peringatanShift, setPeringatanShift] = useState(false);
@@ -264,6 +267,14 @@ function Kerangka({ children }) {
             <span className="hanya-lebar">Ganti password</span>
             <span className="hanya-sempit">Password</span>
           </button>
+          <button
+            type="button" className="btn btn--kecil btn--kedua"
+            onClick={() => setTandaTangan((v) => !v)}
+            aria-label="Tanda tangan saya"
+          >
+            <span className="hanya-lebar">Tanda Tangan Saya</span>
+            <span className="hanya-sempit">Ttd</span>
+          </button>
           <button type="button" className="btn btn--kecil btn--kedua" onClick={tanganiKeluar}>
             Keluar
           </button>
@@ -300,6 +311,9 @@ function Kerangka({ children }) {
             {gantiPassword && (
               <DialogGantiPassword onTutup={() => setGantiPassword(false)} />
             )}
+            {tandaTangan && (
+              <DialogTandaTangan onTutup={() => setTandaTangan(false)} />
+            )}
             {children}
           </div>
           <footer className="footer-aplikasi">
@@ -319,6 +333,16 @@ export default function App() {
   // Dashboard publik berdiri di luar cangkang & tanpa login: tautan bertoken
   // dari luar tim tidak boleh terhalang layar masuk. Diperiksa sebelum apa pun.
   if (lokasi.pathname === '/publik/dashboard') return <PublicDashboard />;
+
+  // Dituju QR sel "Diperiksa Oleh" Halaman 2 - berbasis tanggal, bukan id.
+  // (Kolom Paraf Halaman 1 dulu QR serupa, sekarang tanda tangan digital -
+  // lihat DialogTandaTangan.jsx - jadi tautan publik untuknya sudah dihapus.)
+  const cocokApprovalHarian = lokasi.pathname.match(
+    /^\/publik\/approval-harian\/(\d{4}-\d{2}-\d{2})\/([^/]+)$/,
+  );
+  if (cocokApprovalHarian) {
+    return <PublicApprovalHarian tanggal={cocokApprovalHarian[1]} token={cocokApprovalHarian[2]} />;
+  }
 
   if (memuat) {
     return <div className="login"><div className="login__kotak"><Kosong>Memulihkan sesi…</Kosong></div></div>;

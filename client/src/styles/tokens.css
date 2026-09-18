@@ -57,6 +57,11 @@
   --series-3: #1baf7a;  /* toska  — prepast */
   --series-4: #eda100;  /* kuning — pindah silo */
 
+  /* Ungu — monitoring/pengecekan ronde. Bukan bagian palet kategorikal di
+     atas (itu khusus jenis ALIRAN volume); dipakai murni sebagai penanda
+     visual jenis record di halaman publik "Diperiksa Oleh". */
+  --warna-monitoring: #7c5cbf;
+
   /* --- Sekuensial (besaran) --- */
   --seq-100: #cde2fb;
   --seq-250: #86b6ef;
@@ -106,6 +111,7 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
+    --warna-monitoring: #a78bfa;
 
     --div-neutral: #24304b;
 
@@ -141,6 +147,7 @@
   --series-2: #d95926;
   --series-3: #199e70;
   --series-4: #c98500;
+  --warna-monitoring: #a78bfa;
 
   --div-neutral: #24304b;
 

@@ -80,6 +80,14 @@ export const REV02 = Object.freeze({
       { kunci: 'tempOutput', huruf: 'M', label: 'Temp Output Produk', jenis: 'angka', desimal: 1 },
       { kunci: 'silo', huruf: 'N', label: 'Disimpan di Silo No', jenis: 'teks' },
       { kunci: 'operator', huruf: 'O', label: 'Dikerjakan Oleh', jenis: 'teks' },
+      /**
+       * Tanda tangan digital operator (migrasi 034) - dulu QR, diganti atas
+       * permintaan pengguna: gambar tanda tangan sesungguhnya, bukan tautan
+       * ke riwayat. Operator menggambarnya sekali di profilnya sendiri
+       * (services/signature.js), dipakai ulang di setiap baris yang ia
+       * kerjakan.
+       */
+      { kunci: 'paraf', huruf: 'P', label: 'Paraf', jenis: 'tanda-tangan' },
     ]),
     /** Ambang OPRP diambil dari catatan kaki form, bukan dari angka hafalan. */
     catatanKaki: { sel: 'A27', teks: '*) Setting Temp. : 90oC, Min Temp. : 81oC' },
@@ -115,6 +123,31 @@ export const REV02 = Object.freeze({
       urutanSilo: URUTAN_SILO_FORM,
       /** Kolom saldo awal, ditunda ke L-1 (D-15). Belum diisi. */
       kolomJumlahAwal: keIndeks('B'),
+    }),
+
+    /**
+     * Sel "Diperiksa Oleh," (dulu "...Spv Produksi Shift 1/2/3 :", dihapus
+     * atas permintaan pengguna) - satu tanda tangan review untuk SELURUH
+     * Halaman 2 (bukan per baris seperti Paraf di Halaman 1). Sel A46 sudah
+     * digabung penuh A46:Y46 di template dan berisi teks berformat
+     * (richText); nama SPV menyambung langsung ke "Diperiksa Oleh,". QR-nya
+     * ditaruh di kolom X (bukan Y) pada baris yang sama - lihat catatan
+     * ukuranQr di bawah untuk alasannya.
+     *
+     * ukuranQr 90px, lebih besar dari Paraf Halaman 1 (60px). Mulai dari
+     * kolom Y (kolom TERAKHIR gabungan) pernah dicoba supaya benar-benar
+     * mepet ujung kanan, tapi 90px melebihi lebar kolom Y sendiri (~74px)
+     * dan sebagian gambarnya jatuh di kolom Z - DI LUAR area cetak A1:Y46,
+     * sehingga terpotong saat benar-benar dicetak (terbukti dari percobaan
+     * cetak sungguhan, bukan dugaan). Mundur satu kolom ke X memberi ruang
+     * gabungan X+Y (~148px) yang lebih dari cukup untuk 90px penuh tanpa
+     * menyentuh Z sama sekali, sambil tetap di ujung kanan baris.
+     */
+    diperiksaOleh: Object.freeze({
+      sel: 'A46',
+      baris: 46,
+      kolomQr: keIndeks('X'),
+      ukuranQr: 90,
     }),
   }),
 });

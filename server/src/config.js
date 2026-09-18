@@ -30,6 +30,11 @@ export const config = {
   env: process.env.NODE_ENV ?? 'development',
   isProd: process.env.NODE_ENV === 'production',
   port: angka('PORT', 3000),
+  // Basis URL publik aplikasi (nginx-facing) - dipakai untuk membangun tautan
+  // yang harus benar-benar dapat diakses dari LUAR server, mis. QR code pada
+  // form GMP yang dipindai dari ponsel. Tanpa ini, tautan akan menunjuk ke
+  // localhost dan tidak pernah bisa dibuka di luar mesin servernya sendiri.
+  appUrl: process.env.APP_URL ?? 'http://localhost:3001',
 
   db: {
     host: process.env.DB_HOST ?? 'localhost',

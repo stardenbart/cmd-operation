@@ -130,8 +130,35 @@ function SesiPrepast({ sesi }) {
     return <Kosong>Tidak ada sesi prepast pada rentang &amp; silo ini.</Kosong>;
   }
   const urut = [...sesi].sort((a, b) => new Date(b.start) - new Date(a.start));
+
+  // Ringkasan atas seluruh sesi yang tampil - murni dijumlahkan dari data
+  // sesi yang sudah dimuat untuk kartu & tabel di bawah, tanpa permintaan
+  // tambahan (angkanya sudah ada di s.jumlahRecord/s.volumeLtr/s.keluar).
+  const berjalan = sesi.filter((s) => s.sedangBerjalan).length;
+  const totalMasukLtr = sesi.reduce((total, s) => total + s.volumeLtr, 0);
+  const totalRecordPrepast = sesi.reduce((total, s) => total + s.jumlahRecord, 0);
+  const totalKeluar = sesi.flatMap((s) => s.keluar);
+  const totalKeluarLtr = totalKeluar.reduce((total, o) => total + Number(o.volume), 0);
+
   return (
     <div className="tumpuk analitik-sesi">
+      <div className="statistik-grid">
+        <Statistik
+          label="Sesi Prepast"
+          nilai={fmt(sesi.length)}
+          bantuan={berjalan > 0 ? `${berjalan} sedang berjalan` : 'Semua sudah selesai'}
+        />
+        <Statistik
+          label="Record Prepast"
+          nilai={fmt(totalMasukLtr)} satuan="L"
+          bantuan={`${totalRecordPrepast} record masuk`}
+        />
+        <Statistik
+          label="Record Transfer"
+          nilai={fmt(totalKeluarLtr)} satuan="L"
+          bantuan={`${totalKeluar.length} record keluar`}
+        />
+      </div>
       {urut.map((s) => (
         <div key={s.id} className="kartu tumpuk analitik-sesi__kartu">
           <div className="analitik-sesi__kepala">
@@ -146,8 +173,18 @@ function SesiPrepast({ sesi }) {
             <div className="analitik-sesi__blok">
               <div className="label">Masuk ke {s.siloName}</div>
               <TabelGrafik
-                kolom={[{ k: 'jam', label: 'Jam' }, { k: 'supplier', label: 'Supplier' }]}
-                baris={s.masuk.map((m) => ({ jam: waktuSingkat(m.jam), supplier: m.supplier }))}
+                kolom={[
+                  { k: 'volume', label: 'Volume (L)', num: true },
+                  { k: 'masuk', label: 'Masuk' },
+                  { k: 'selesai', label: 'Selesai' },
+                  { k: 'supplier', label: 'Supplier' },
+                ]}
+                baris={s.masuk.map((m) => ({
+                  volume: m.volumeLtr,
+                  masuk: waktuSingkat(m.jam),
+                  selesai: m.selesai ? waktuSingkat(m.selesai) : '-',
+                  supplier: m.supplier,
+                }))}
               />
             </div>
             <div className="analitik-sesi__blok">

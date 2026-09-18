@@ -354,8 +354,10 @@ describe('Berkas xlsx', () => {
     assert.equal(buffer.subarray(0, 2).toString(), 'PK');
     assert.ok(buffer.length > 10_000, 'template terbawa, bukan berkas kosong');
 
-    assert.equal(formExcel.namaBerkas('2026-08-10'), 'Rekap_FM_20260810.xlsx');
-    assert.equal(formExcel.namaBerkas('2026-08-10', 2), 'Rekap_FM_20260810_2.xlsx');
+    // No. Dokumen formnya ("CMD1/FRM/PRD/01") + tanggal DD-MM-YYYY - bukan
+    // nama generik lagi.
+    assert.equal(formExcel.namaBerkas('2026-08-10'), 'CMD1_FRM_PRD_01_10082026.xlsx');
+    assert.equal(formExcel.namaBerkas('2026-08-10', 2), 'CMD1_FRM_PRD_01_10082026_2.xlsx');
   });
 });
 
@@ -521,8 +523,8 @@ describe('Arsip rentang - F3-8, FR-12.12', () => {
 
     assert.deepEqual(isi, [
       '_indeks.csv',
-      'Rekap_FM_20260810.xlsx',
-      'Rekap_FM_20260811.xlsx',
+      'CMD1_FRM_PRD_01_10082026.xlsx',
+      'CMD1_FRM_PRD_01_11082026.xlsx',
     ].sort());
   });
 

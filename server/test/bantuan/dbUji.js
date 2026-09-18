@@ -246,15 +246,23 @@ export async function bangunBasisDataUji() {
  */
 async function seedOperatorUji() {
   const argon2 = (await import('argon2')).default;
+  const QRCode = (await import('qrcode')).default;
   const hash = await argon2.hash(PASSWORD_UJI, { type: argon2.argon2id });
   const conn = await konekPerkakas();
+
+  // PNG kecil yang SAH (bukan cuma placeholder byte acak) - dipakai sebagai
+  // tanda tangan digital bawaan ketiga aktor uji (migrasi 034). Tanpa ini,
+  // setiap uji yang memanggil receiving.buat() gagal duluan dengan
+  // SIGNATURE_REQUIRED, padahal yang diuji bukan itu.
+  const tandaTanganUji = await QRCode.toBuffer('uji', { type: 'png', width: 20 });
 
   for (const o of Object.values(AKTOR)) {
     await conn.query(
       `INSERT INTO operator
-         (id, kode, username, nama_lengkap, password_hash, must_change_password, role, is_active)
-       VALUES (?, ?, ?, ?, ?, FALSE, ?, TRUE)`,
-      [o.id, o.kode, o.kode, o.nama, hash, o.role],
+         (id, kode, username, nama_lengkap, password_hash, must_change_password, role,
+          is_active, signature_image, signature_updated_at)
+       VALUES (?, ?, ?, ?, ?, FALSE, ?, TRUE, ?, UTC_TIMESTAMP())`,
+      [o.id, o.kode, o.kode, o.nama, hash, o.role, tandaTanganUji],
     );
   }
 }

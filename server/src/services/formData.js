@@ -117,7 +117,7 @@ export async function modelForm(tanggalIso) {
   // ---- Halaman 1: penerimaan, dijaring menurut finish_time ----
   const [barisReceiving] = await pool.query(
     `SELECT r.id, r.kode, r.qty_kg, r.berat_jenis, r.nilai_ts, r.qty_ltr,
-            r.finish_time, r.status_approval, r.remarks,
+            r.finish_time, r.status_approval, r.remarks, r.operator_id,
             sup.supplier_name, o.nama_lengkap AS operator_nama
        FROM receiving r
        JOIN supplier sup ON sup.id = r.supplier_id
@@ -169,6 +169,10 @@ export async function modelForm(tanggalIso) {
       nilaiTs: keAngka(r.nilai_ts),
       qtyLtr: keAngka(r.qty_ltr),
       operator: r.operator_nama,
+      // Dituju kolom Paraf (jenis 'tanda-tangan' - lihat
+      // formLayout.js/formExcel.js). Nilainya operator_id-nya sendiri;
+      // formExcel.js yang mengambil gambar tanda tangannya.
+      paraf: r.operator_id,
       remarks: r.remarks,
       ...gabungan,
     };
@@ -177,10 +181,12 @@ export async function modelForm(tanggalIso) {
   // ---- Halaman 2: monitoring per hari kalendernya sendiri ----
   const [barisMonitoring] = await pool.query(
     `SELECT m.id, m.kode, m.ph_check, m.temp_check, m.time_check,
-            m.status_approval, s.kode AS silo_kode, o.nama_lengkap AS operator_nama
+            m.status_approval, s.kode AS silo_kode, o.nama_lengkap AS operator_nama,
+            sp.nama_lengkap AS approver_nama
        FROM monitoring m
        JOIN silo s     ON s.id = m.silo_id
        JOIN operator o ON o.id = m.operator_id
+       LEFT JOIN operator sp ON sp.id = m.approved_by_id
       WHERE m.time_check BETWEEN ? AND ?
         AND m.status_approval IN (${tanda})
       ORDER BY m.time_check, m.id`,
@@ -205,10 +211,11 @@ export async function modelForm(tanggalIso) {
   const [barisTransfer] = await pool.query(
     `SELECT t.id, t.kode, t.batch, t.vol_ltr, t.vol_akt_silo_ltr, t.trf_time,
             t.status_approval, sa.kode AS silo_asal_kode,
-            o.nama_lengkap AS operator_nama
+            o.nama_lengkap AS operator_nama, sp.nama_lengkap AS approver_nama
        FROM transfer t
        JOIN silo sa    ON sa.id = t.silo_asal_id
        JOIN operator o ON o.id = t.operator_id
+       LEFT JOIN operator sp ON sp.id = t.approved_by_id
       WHERE t.trf_time BETWEEN ? AND ?
         AND t.transfer_type = 'PEMAKAIAN PRODUKSI'
         AND t.status_approval IN (${tanda})
@@ -241,6 +248,11 @@ export async function modelForm(tanggalIso) {
     [dari, sampai, ...STATUS_TERBIT],
   );
 
+  // "Diperiksa Oleh" (footer Halaman 2, sel A46) - SPV yang menyetujui
+  // Monitoring dan/atau Transfer hari itu. Bisa lebih dari satu nama: label
+  // formnya sendiri menyebut "Shift 1/2/3", jadi wajar tiap shift beda SPV.
+  const diperiksaOleh = new Set();
+
   // Dikelompokkan menurut urutan silo pada FORM, bukan urutan basis data
   const monitoringPerSilo = new Map(URUTAN_SILO_FORM.map((k) => [k, []]));
   const operatorPerSilo = new Map();
@@ -255,6 +267,7 @@ export async function modelForm(tanggalIso) {
       statusApproval: m.status_approval,
     });
     if (!operatorPerSilo.has(m.silo_kode)) operatorPerSilo.set(m.silo_kode, m.operator_nama);
+    if (m.approver_nama) diperiksaOleh.add(m.approver_nama);
   }
 
   const transferPerSilo = new Map(URUTAN_SILO_FORM.map((k) => [k, []]));
@@ -271,6 +284,7 @@ export async function modelForm(tanggalIso) {
       statusApproval: t.status_approval,
       penanda: null,
     });
+    if (t.approver_nama) diperiksaOleh.add(t.approver_nama);
 
     /**
      * PENANDA SILO KOSONG.
@@ -323,6 +337,10 @@ export async function modelForm(tanggalIso) {
         siloKode: kode,
         slot: transferPerSilo.get(kode),
       })),
+      // Dituju sel "Diperiksa Oleh" (A46) + QR di sampingnya - lihat
+      // formExcel.js. Urut nama supaya berkas yang sama selalu menghasilkan
+      // teks yang sama, bukan bergantung urutan baris database.
+      diperiksaOleh: [...diperiksaOleh].sort(),
     },
     catatan: {
       pindahSilo: barisPindah.map((t) => ({

@@ -75,6 +75,24 @@ export default function Prepast() {
   const sebelumnya = konteksKontinu?.data?.sebelumnya;
   const saranStart = keInputWaktu(konteksKontinu?.data?.saranStart);
 
+  // Ambang "masih terasa nyambung" untuk Proses Kontinu — bukan aturan
+  // keras (kontinu() di backend tetap definisi resminya, cocok persis ke
+  // menit), sekadar peringatan: mesin yang sudah nganggur lama sejak
+  // record terakhir selesai kemungkinan bukan sambungan proses yang sama
+  // lagi. Dicek berkala dari jam nyata (bukan sekali saat form dibuka),
+  // sama seperti pola peringatan pergantian shift — supaya tidak macet di
+  // tab yang dibiarkan terbuka lama.
+  const AMBANG_KONTINU_MENIT = 45;
+  const [sekarang, setSekarang] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setSekarang(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const gapKontinuMenit = sebelumnya
+    ? (sekarang - new Date(sebelumnya.finish).getTime()) / 60_000
+    : null;
+  const lewatAmbangKontinu = gapKontinuMenit !== null && gapKontinuMenit > AMBANG_KONTINU_MENIT;
+
   // Prepast milik operator ini (atau siapa pun bila SPV) yang masih
   // menggantung — BR-23. Query key sama persis dengan PengingatGantung di
   // Dashboard, jadi kalau sudah ter-cache dari sana tidak ada request kedua.
@@ -133,6 +151,12 @@ export default function Prepast() {
       setKontinu(false);
       qc.invalidateQueries({ queryKey: ['silos'] });
       qc.invalidateQueries({ queryKey: ['prepast'] });
+      // BR-23 — record yang baru disimpan bisa langsung menggantung (mis.
+      // Waktu Selesai belum diisi). Tanpa ini, tab "Lengkapi" di halaman
+      // ini sendiri (dan kartu Perlu Dilengkapi di Dashboard) masih
+      // menampilkan data lama sampai refetch berkala 60 detik berikutnya —
+      // operator yang langsung pindah tab tidak melihat record barunya.
+      qc.invalidateQueries({ queryKey: ['data'] });
     },
   });
 
@@ -458,6 +482,13 @@ export default function Prepast() {
                 />
                 Proses Kontinu — sarankan Waktu Mulai, Flowrate, Temp After Heater &amp; Temp Output dari record Prepast terakhir
               </label>
+              {lewatAmbangKontinu && (
+                <div className="pesan pesan--waspada">
+                  Sudah {fmt(gapKontinuMenit, 0)} menit sejak {sebelumnya.kode} selesai — lebih dari
+                  {' '}{AMBANG_KONTINU_MENIT} menit. Kemungkinan ini bukan sambungan proses yang sama lagi.
+                  Tetap boleh ditandai Kontinu bila memang benar menyambung, tapi periksa dulu.
+                </div>
+              )}
           </div>
 
           {tempRendah && (
