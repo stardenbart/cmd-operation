@@ -411,7 +411,7 @@ export default function Analitik() {
             <Statistik
               label="Tersimpan di silo"
               nilai={fmt(r.saldo.siloLtr)} satuan="L"
-              bantuan={`Ditambah ${fmt(r.saldo.bufferLtr)} L Di SILO7`}
+              bantuan={`Ditambah ${fmt(r.saldo.bufferLtr)} L di buffer`}
             />
             <Statistik
               label="Utilisasi kapasitas"

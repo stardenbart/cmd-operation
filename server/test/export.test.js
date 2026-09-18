@@ -99,7 +99,7 @@ describe('Tanggal patokan adalah waktu selesai penerimaan', () => {
   /**
    * Celah B-29 pada flow lama: prefilter tiga hari membuang prepast yang
    * dikerjakan lebih dari sehari setelah penerimaan, misalnya batch yang
-   * menginap Di SILO7, sehingga baris formnya terbit dengan kolom prepast
+   * menginap di buffer, sehingga baris formnya terbit dengan kolom prepast
    * kosong.
    */
   test('prepast tiga hari setelah penerimaan tetap terbaca - B-29', async () => {
