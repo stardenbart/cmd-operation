@@ -4,6 +4,7 @@ import * as auth from '../auth/service.js';
 import { aksiUntukUser } from '../auth/permissions.js';
 import { wajibLogin } from '../middleware/auth.js';
 import { asyncHandler, AppError } from '../middleware/errors.js';
+import { simpanTandaTangan, hapusTandaTangan, ambilTandaTangan } from '../services/signature.js';
 
 const router = Router();
 
@@ -37,6 +38,11 @@ const skemaLogin = z.object({
 const skemaGantiPassword = z.object({
   passwordLama: z.string().min(1).max(200),
   passwordBaru: z.string().min(1).max(200),
+});
+
+const skemaSimpanTandaTangan = z.object({
+  // Data URL dari <canvas>.toDataURL('image/png') - "data:image/png;base64,...."
+  gambar: z.string().min(1, 'Tanda tangan tidak boleh kosong'),
 });
 
 /*
@@ -138,6 +144,49 @@ router.get(
       operator: { ...req.user, customPermissions: req.user.cp },
       wewenang: aksiUntukUser(req.user.role, req.user.cp),
     });
+  }),
+);
+
+/**
+ * Tanda tangan digital - kolom Paraf Halaman 1 form GMP (migrasi 034).
+ *
+ * SELALU operator SENDIRI (req.user.id) - tidak ada parameter id di sini.
+ * Sama seperti Ganti Password: milik pribadi, tidak diwakilkan lewat rute
+ * ini (Admin yang benar-benar perlu mengelola punya orang lain memakai
+ * jalur Master Data terpisah, bukan endpoint ini).
+ */
+router.get(
+  '/signature',
+  wajibLogin,
+  asyncHandler(async (req, res) => {
+    const png = await ambilTandaTangan(req.user.id);
+    res.json({
+      ada: Boolean(png),
+      gambar: png ? `data:image/png;base64,${png.toString('base64')}` : null,
+    });
+  }),
+);
+
+router.post(
+  '/signature',
+  wajibLogin,
+  validasi(skemaSimpanTandaTangan),
+  asyncHandler(async (req, res) => {
+    const cocok = /^data:image\/png;base64,(.+)$/.exec(req.body.gambar);
+    if (!cocok) {
+      throw new AppError('Gambar tanda tangan harus PNG (data URL)', { code: 'SIGNATURE_INVALID' });
+    }
+    await simpanTandaTangan(req.user.id, Buffer.from(cocok[1], 'base64'));
+    res.json({ pesan: 'Tanda tangan tersimpan.' });
+  }),
+);
+
+router.delete(
+  '/signature',
+  wajibLogin,
+  asyncHandler(async (req, res) => {
+    await hapusTandaTangan(req.user.id);
+    res.json({ pesan: 'Tanda tangan dihapus.' });
   }),
 );
 

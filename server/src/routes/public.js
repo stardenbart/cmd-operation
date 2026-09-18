@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { asyncHandler, ForbiddenError } from '../middleware/errors.js';
 import { validasiQuery } from '../middleware/validasi.js';
 import { dataPublik, verifikasiToken } from '../services/publicDashboard.js';
+import { verifikasiTokenHarian, riwayatApprovalHarian } from '../services/approvalShare.js';
 
 const router = Router();
 
@@ -24,6 +25,25 @@ router.get(
       throw new ForbiddenError('Tautan tidak berlaku atau telah dicabut.');
     }
     res.json({ data: await dataPublik() });
+  }),
+);
+
+/**
+ * Dituju QR sel "Diperiksa Oleh" di Halaman 2 form GMP - lihat
+ * services/approvalShare.js. Berbasis TANGGAL, bukan id record tunggal:
+ * satu tanda tangan di form itu mewakili seluruh Monitoring+Transfer hari
+ * itu, bukan satu baris tertentu.
+ */
+router.get(
+  '/approval-harian/:tanggal/:token',
+  asyncHandler(async (req, res) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.tanggal)) {
+      throw new ForbiddenError('Tautan tidak berlaku.');
+    }
+    if (!verifikasiTokenHarian(req.params.tanggal, req.params.token)) {
+      throw new ForbiddenError('Tautan tidak berlaku.');
+    }
+    res.json({ data: await riwayatApprovalHarian(req.params.tanggal) });
   }),
 );
 

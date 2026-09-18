@@ -10,6 +10,7 @@ import { hitungQtyLtr } from './konversi.js';
 import { terbitkanId } from './idGenerator.js';
 import { catatAudit } from './audit.js';
 import { statusKelengkapanReceiving } from './receivingGantung.js';
+import { pastikanPunyaTandaTangan } from './signature.js';
 import { BusinessError, NotFoundError, ForbiddenError } from '../middleware/errors.js';
 
 const STATUS_DIABAIKAN = ['Rejected', 'REVISED', 'VOIDED'];
@@ -47,6 +48,11 @@ export async function konteksForm() {
  * dan pencatatan audit berhasil bersama atau gagal bersama.
  */
 export async function buat({ supplierId, qtyKg, beratJenis, nilaiTs, finishTime, remarks }, aktor, ip) {
+  // Kolom Paraf Halaman 1 form GMP memakai tanda tangan operator ini
+  // (migrasi 034) - dicek di LUAR transaksi, sebelum tulisan apa pun,
+  // supaya tidak pernah ada Receiving baru yang Paraf-nya bakal kosong.
+  await pastikanPunyaTandaTangan(aktor.id);
+
   return withTransaction(async (conn) => {
     const buffer = await ambilBuffer(conn);
 
