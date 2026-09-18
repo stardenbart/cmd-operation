@@ -10,7 +10,6 @@ import { hitungQtyLtr } from './konversi.js';
 import { terbitkanId } from './idGenerator.js';
 import { catatAudit } from './audit.js';
 import { statusKelengkapanReceiving } from './receivingGantung.js';
-import { pastikanPunyaTandaTangan } from './signature.js';
 import { BusinessError, NotFoundError, ForbiddenError } from '../middleware/errors.js';
 
 const STATUS_DIABAIKAN = ['Rejected', 'REVISED', 'VOIDED'];
@@ -48,11 +47,11 @@ export async function konteksForm() {
  * dan pencatatan audit berhasil bersama atau gagal bersama.
  */
 export async function buat({ supplierId, qtyKg, beratJenis, nilaiTs, finishTime, remarks }, aktor, ip) {
-  // Kolom Paraf Halaman 1 form GMP memakai tanda tangan operator ini
-  // (migrasi 034) - dicek di LUAR transaksi, sebelum tulisan apa pun,
-  // supaya tidak pernah ada Receiving baru yang Paraf-nya bakal kosong.
-  await pastikanPunyaTandaTangan(aktor.id);
-
+  // Kolom Paraf Halaman 1 form GMP memakai tanda tangan operator ini (migrasi
+  // 034) BILA SUDAH ADA - sengaja TIDAK diwajibkan di sini (dicabut
+  // 2026-09-18, sempat memblokir operasional operator yang belum sempat
+  // membuat tanda tangannya). formExcel.js membiarkan sel Paraf kosong
+  // untuk operator yang belum punya, bukan gagal.
   return withTransaction(async (conn) => {
     const buffer = await ambilBuffer(conn);
 

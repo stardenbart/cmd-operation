@@ -168,33 +168,23 @@ describe('Endpoint /api/v1/auth/signature - SELALU milik sendiri', () => {
   });
 });
 
-describe('receiving.buat() menegakkan wajib tanda tangan', () => {
-  test('ditolak SIGNATURE_REQUIRED bila operator belum punya tanda tangan', async () => {
+describe('receiving.buat() TIDAK mewajibkan tanda tangan (dicabut 2026-09-18)', () => {
+  // Sempat mewajibkan tanda tangan sebelum submit Receiving (BR baru saat
+  // migrasi 034 dibuat), tapi ini memblokir operasional operator yang belum
+  // sempat membuat tanda tangannya - dicabut di hari yang sama fitur ini
+  // dirilis ke production. formExcel.js tetap menangani ketiadaan tanda
+  // tangan dengan baik (sel Paraf kosong, bukan galat) - lihat
+  // approvalShare.test.js.
+  test('berhasil walau operator belum punya tanda tangan', async () => {
     await signature.hapusTandaTangan(AKTOR.operator.id);
-    await assert.rejects(
-      () => receiving.buat(
-        { supplierId: 1, qtyKg: 1000, beratJenis: 1, nilaiTs: 12.4, finishTime: W(10, 6) },
-        AKTOR.operator, IP_UJI,
-      ),
-      (err) => err.code === 'SIGNATURE_REQUIRED',
+    const rcv = await receiving.buat(
+      { supplierId: 1, qtyKg: 1000, beratJenis: 1, nilaiTs: 12.4, finishTime: W(10, 6) },
+      AKTOR.operator, IP_UJI,
     );
+    assert.ok(rcv.id);
   });
 
-  test('tidak ada apa pun tersimpan setelah penolakan - dicek SEBELUM transaksi', async () => {
-    await signature.hapusTandaTangan(AKTOR.operator.id);
-    try {
-      await receiving.buat(
-        { supplierId: 1, qtyKg: 1000, beratJenis: 1, nilaiTs: 12.4, finishTime: W(10, 6) },
-        AKTOR.operator, IP_UJI,
-      );
-    } catch { /* diharapkan */ }
-
-    const { pool } = await import('../src/db/pool.js');
-    const [[{ jumlah }]] = await pool.query('SELECT COUNT(*) AS jumlah FROM receiving');
-    assert.equal(jumlah, 0);
-  });
-
-  test('berhasil begitu operator sudah punya tanda tangan', async () => {
+  test('berhasil juga begitu operator sudah punya tanda tangan', async () => {
     await signature.simpanTandaTangan(AKTOR.operator.id, await pngUji());
     const rcv = await receiving.buat(
       { supplierId: 1, qtyKg: 1000, beratJenis: 1, nilaiTs: 12.4, finishTime: W(10, 6) },
